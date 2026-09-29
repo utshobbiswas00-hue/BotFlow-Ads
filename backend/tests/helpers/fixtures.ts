@@ -7,6 +7,7 @@ import type {
   User,
   Wallet,
 } from '@prisma/client';
+import type { PostingSchedule } from '@botflow/shared';
 import { Prisma, prisma } from '../../src/db/prisma';
 
 /**
@@ -124,6 +125,8 @@ export async function createChannel(
     maxCampaignsPerHour?: number;
     language?: string;
     title?: string;
+
+    postingSchedule?: PostingSchedule | null;
   } = {},
 ): Promise<Channel> {
   const telegramChannelId = BigInt(-1_000_000_000 - nextId());
@@ -146,6 +149,9 @@ export async function createChannel(
       minHoursBetweenAds: options.minHoursBetweenAds ?? 0,
       maxCampaignsPerHour: options.maxCampaignsPerHour ?? 100,
       language: options.language ?? 'en',
+      ...(options.postingSchedule !== undefined
+        ? { postingSchedule: options.postingSchedule ?? Prisma.DbNull }
+        : {}),
     },
   });
 }

@@ -75,6 +75,18 @@ export interface ChannelSummary {
   totalAdsPublished: number;
   totalEarnedCents: number;
   rejectionReason?: string | null;
+
+  /**
+   * The publisher's weekly posting schedule: weekday ("0" = Sunday) -> the
+   * channel-local times a sponsored post may go out at. `null`/absent means no
+   * schedule is set, and only `maxPostsPerDay` + `minHoursBetweenAds` apply.
+   */
+  postingSchedule?: Record<string, string[]> | null;
+  maxPostsPerDay?: number;
+  minHoursBetweenAds?: number;
+  acceptAds?: boolean;
+  autoApprovePosts?: boolean;
+  minAdPriceCents?: number;
 }
 
 export interface CampaignSummary {

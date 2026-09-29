@@ -1,11 +1,19 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { CHANNEL_CATEGORIES, type ChannelSummary } from '@botflow/shared';
+import {
+  CHANNEL_CATEGORIES,
+  MAX_WEEKLY_POSTS,
+  WEEKDAYS,
+  weeklySlotCount,
+  type ChannelSummary,
+  type PostingSchedule,
+} from '@botflow/shared';
 import { api, errMsg } from '../lib/api';
 import { qk } from '../lib/queryClient';
 import { categoryLabel } from '../lib/format';
 import { PageHeader } from '../components/layout/PageHeader';
+import { PostingScheduleEditor } from '../components/channels/PostingScheduleEditor';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
@@ -46,6 +54,14 @@ const LANGUAGES = [
   { code: 'de', name: 'German' },
 ];
 
+/**
+ * Sensible starting schedule: 3 posts a day (09:00, 15:00, 21:00) on all 7
+ * days — exactly MAX_WEEKLY_POSTS (21) a week.
+ */
+function defaultWeeklySchedule(): PostingSchedule {
+  return Object.fromEntries(WEEKDAYS.map((day) => [String(day), ['09:00', '15:00', '21:00']]));
+}
+
 export function AddChannelPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -54,6 +70,7 @@ export function AddChannelPage() {
   const [language, setLanguage] = useState('en');
   const [country, setCountry] = useState('BD');
   const [agreePolicy, setAgreePolicy] = useState(false);
+  const [schedule, setSchedule] = useState<PostingSchedule>(defaultWeeklySchedule);
 
   const create = useMutation({
     mutationFn: (body: {
@@ -62,6 +79,7 @@ export function AddChannelPage() {
       language: string;
       country: string;
       acceptedPolicy: boolean;
+      postingSchedule: PostingSchedule;
     }): Promise<ChannelSummary> => api.post<ChannelSummary>('/api/channels', body),
     onSuccess: (data) => {
       showToast('success', 'Channel added');
@@ -77,12 +95,29 @@ export function AddChannelPage() {
       showToast('error', 'Enter a valid Telegram channel username (e.g. mychannel)');
       return;
     }
+    const weeklyTotal = weeklySlotCount(schedule);
+    if (weeklyTotal > MAX_WEEKLY_POSTS) {
+      showToast(
+        'error',
+        `A channel can accept at most ${MAX_WEEKLY_POSTS} posts a week (you picked ${weeklyTotal}). Remove ${
+          weeklyTotal - MAX_WEEKLY_POSTS
+        } to continue.`,
+      );
+      return;
+    }
     if (!agreePolicy) return;
     // Fire-and-forget consent persistence — a failure here must never block
     // the channel submission itself.
     void api.post('/api/legal/publisher-agreement/accept').catch(() => undefined);
     void api.post('/api/legal/terms/accept').catch(() => undefined);
-    create.mutate({ channelUsername: cleaned, category, language, country, acceptedPolicy: true });
+    create.mutate({
+      channelUsername: cleaned,
+      category,
+      language,
+      country,
+      acceptedPolicy: true,
+      postingSchedule: schedule,
+    });
   };
 
   return (
@@ -128,6 +163,8 @@ export function AddChannelPage() {
           </div>
         </Card>
 
+        <PostingScheduleEditor value={schedule} onChange={setSchedule} />
+
         <Card className="space-y-2">
           <h3 className="text-sm font-semibold">How it works</h3>
           <ol className="text-sm text-mute space-y-1.5 list-decimal list-inside">
@@ -167,6 +204,12 @@ export function AddChannelPage() {
           </label>
         </Card>
 
+        <p className="text-xs text-mute leading-relaxed px-1">
+          Before verifying, add <b>@BotflowadsBot</b> as a channel administrator with the{' '}
+          <b>&quot;Post Messages&quot;</b> permission. Your channel is added the moment the bot has those
+          rights.
+        </p>
+
         <Button
           full
           size="lg"
@@ -175,7 +218,7 @@ export function AddChannelPage() {
           onClick={submit}
           icon={<Icon name="check" size={18} />}
         >
-          Submit for review
+          Verify Channel
         </Button>
       </div>
     </>

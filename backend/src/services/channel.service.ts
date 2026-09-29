@@ -1,10 +1,11 @@
-import type { ChannelCategory, ChannelStatus, Prisma } from '@prisma/client';
+import type { ChannelCategory, ChannelStatus } from '@prisma/client';
 import {
-  marketplaceFilterSchema,
   type MarketplaceSort,
+  type PostingSchedule,
   type PricingModel,
+  marketplaceFilterSchema,
 } from '@botflow/shared';
-import { prisma } from '../db/prisma';
+import { Prisma, prisma } from '../db/prisma';
 import { getChatInfo, checkBotPermissions } from '../utils/telegram';
 import {
   ConflictError,
@@ -55,6 +56,7 @@ export const CHANNEL_SELECT = {
   minHoursBetweenAds: true,
   acceptAds: true,
   minAdPriceCents: true,
+  postingSchedule: true,
   totalAdsPublished: true,
   totalEarnedCents: true,
   approvedAt: true,
@@ -71,6 +73,8 @@ export interface AddChannelInput {
   category?: ChannelCategory;
   language?: string;
   country?: string;
+  /** The publisher's weekly posting schedule (shared/src/schemas.ts). */
+  postingSchedule?: PostingSchedule;
 }
 
 export async function addChannel(ownerId: string, input: AddChannelInput) {
@@ -94,14 +98,19 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
     throw new ValidationError('Only Telegram channels can be added. Groups are not supported for ad delivery.');
   }
 
-  // 2. Record the bot's current permissions, but do not block on them.
-  //    A channel can be added and reviewed before the bot is made an admin —
-  //    the owner adds the bot afterwards, Telegram's `my_chat_member` event
-  //    updates `botIsAdmin`/`canPostMessages` in real time (see
-  //    bot/handlers/myChatMember.ts), and the channel becomes deliverable
-  //    without having to re-submit anything. `checkBotPermissions` itself
-  //    never throws — a lookup failure just reads as "not admin yet" — so
-  //    this call cannot fail the request.
+  // 2. The bot's rights are the gate, not a later review step.
+  //
+  //    There is no PENDING stage: a channel either has the bot as an
+  //    administrator with "Post Messages" and is therefore deliverable, or it
+  //    is not added at all and the owner is told to grant the rights first.
+  //    That keeps `ChannelStatus` honest — an APPROVED channel here means
+  //    "sponsored posts can actually go out right now" — and removes the
+  //    half-added row that used to sit in the owner's list waiting for a
+  //    permission that may never come.
+  //
+  //    `checkBotPermissions` never throws — a lookup failure reads as "not
+  //    admin yet" — so a Telegram hiccup produces the same clear instruction
+  //    rather than a 500.
   const perms = await checkBotPermissions(chat.id);
   const botReady = perms.botIsAdmin && perms.canPostMessages;
 
@@ -112,6 +121,13 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
     where: { telegramChannelId: chat.id },
     select: { id: true, ownerId: true, status: true },
   });
+
+  if (!botReady && !existing) {
+    throw new ValidationError(
+      `@BotflowadsBot is not an administrator of "${chat.title}" with the "Post Messages" permission yet. ` +
+        'Add the bot as an administrator (Post Messages ON), then press Verify Channel again.',
+    );
+  }
 
   if (existing) {
     if (existing.ownerId !== ownerId) {
@@ -132,11 +148,14 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
         canEditMessages: perms.canEditMessages,
         canDeleteMessages: perms.canDeleteMessages,
         lastPermissionCheck: new Date(),
-        ...(existing.status === 'REJECTED' || existing.status === 'ATTENTION_REQUIRED'
-          ? { status: botReady ? ('APPROVED' as ChannelStatus) : ('PENDING' as ChannelStatus), rejectionReason: null }
-          : existing.status === 'PENDING' && botReady
-            ? { status: 'APPROVED' as ChannelStatus }
-            : {}),
+        ...(input.postingSchedule !== undefined ? { postingSchedule: input.postingSchedule } : {}),
+        // A re-add never demotes: rights that are still missing leave the
+        // existing status alone (verifyChannel owns the ATTENTION_REQUIRED
+        // transition), while rights that are present promote a rejected or
+        // flagged channel straight back to APPROVED.
+        ...(botReady && existing.status !== 'APPROVED'
+          ? { status: 'APPROVED' as ChannelStatus, rejectionReason: null }
+          : {}),
         ...(botReady && existing.status !== 'APPROVED'
           ? { approvedAt: new Date(), verifiedAt: new Date() }
           : {}),
@@ -160,7 +179,9 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
       language: input.language ?? 'en',
       country: input.country ?? 'BD',
       subscriberCount: chat.memberCount ?? 0,
-      status: botReady ? 'APPROVED' : 'PENDING',
+      // No PENDING: reaching this line means the bot already has the rights.
+      status: 'APPROVED',
+      ...(input.postingSchedule !== undefined ? { postingSchedule: input.postingSchedule } : {}),
       botIsAdmin: perms.botIsAdmin,
       canPostMessages: perms.canPostMessages,
       canEditMessages: perms.canEditMessages,
@@ -168,7 +189,8 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
       lastPermissionCheck: new Date(),
       adPriceCents: defaultPrice,
       pricingModel: 'FIXED',
-      ...(botReady ? { approvedAt: new Date(), verifiedAt: new Date() } : {}),
+      approvedAt: new Date(),
+      verifiedAt: new Date(),
     },
     select: CHANNEL_SELECT,
   });
@@ -306,12 +328,20 @@ export interface UpdateChannelInput {
   acceptAds?: boolean;
   /** Publisher floor. 0 = no floor. Blocks any advertiser offer below this. */
   minAdPriceCents?: number;
+  /** Replace the weekly posting schedule. `null` clears it. */
+  postingSchedule?: PostingSchedule | null;
 }
 
 export async function updateChannel(ownerId: string, channelId: string, input: UpdateChannelInput) {
   const channel = await prisma.channel.findUnique({
     where: { id: channelId },
-    select: { ownerId: true, status: true, adPriceCents: true, minAdPriceCents: true },
+    select: {
+      ownerId: true,
+      status: true,
+      adPriceCents: true,
+      minAdPriceCents: true,
+      postingSchedule: true,
+    },
   });
   if (!channel) throw new NotFoundError('Channel');
   if (channel.ownerId !== ownerId) throw new ForbiddenError('This channel belongs to another account');
@@ -357,6 +387,9 @@ export async function updateChannel(ownerId: string, channelId: string, input: U
       ...(input.minHoursBetweenAds !== undefined ? { minHoursBetweenAds: input.minHoursBetweenAds } : {}),
       ...(input.acceptAds !== undefined ? { acceptAds: input.acceptAds } : {}),
       ...(input.minAdPriceCents !== undefined ? { minAdPriceCents: input.minAdPriceCents } : {}),
+      ...(input.postingSchedule !== undefined
+        ? { postingSchedule: input.postingSchedule ?? Prisma.DbNull }
+        : {}),
     },
     select: CHANNEL_SELECT,
   });

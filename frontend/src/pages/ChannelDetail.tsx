@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { CHANNEL_CATEGORIES } from '@botflow/shared';
+import {
+  CHANNEL_CATEGORIES,
+  MAX_WEEKLY_POSTS,
+  WEEKDAYS,
+  WEEKDAY_LABELS,
+  weeklySlotCount,
+  type PostingSchedule,
+} from '@botflow/shared';
 import { api, errMsg } from '../lib/api';
 import { qk } from '../lib/queryClient';
 import type { ChannelDetail as ChannelDetailT } from '../lib/contracts';
@@ -13,6 +20,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { LineChart } from '../components/charts/LineChart';
 import { StatCard } from '../components/charts/StatCard';
 import { BlocklistPanel } from '../components/domain/BlocklistPanel';
+import { PostingScheduleEditor } from '../components/channels/PostingScheduleEditor';
 import { Button } from '../components/ui/Button';
 import { Card, CardTitle } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
@@ -50,6 +58,7 @@ export function ChannelDetailPage() {
   const [acceptAds, setAcceptAds] = useState(true);
   const [minPrice, setMinPrice] = useState('');
   const [minPriceTouched, setMinPriceTouched] = useState(false);
+  const [schedule, setSchedule] = useState<PostingSchedule>({});
 
   const update = useMutation({
     mutationFn: (body: Record<string, unknown>): Promise<unknown> => api.patch(`/api/channels/${id}`, body),
@@ -92,6 +101,12 @@ export function ChannelDetailPage() {
     setAcceptAds(c.acceptAds ?? true);
     setMinPrice((c.minAdPriceCents / 100).toFixed(2));
     setMinPriceTouched(false);
+    // Seed the editor from the channel's schedule; null/absent = empty.
+    setSchedule(
+      c.postingSchedule
+        ? Object.fromEntries(Object.entries(c.postingSchedule).map(([day, times]) => [day, [...times]]))
+        : {},
+    );
     setEditOpen(true);
   };
 
@@ -115,6 +130,16 @@ export function ChannelDetailPage() {
     } else {
       minCents = c.minAdPriceCents;
     }
+    const weeklyTotal = weeklySlotCount(schedule);
+    if (weeklyTotal > MAX_WEEKLY_POSTS) {
+      showToast(
+        'error',
+        `A channel can accept at most ${MAX_WEEKLY_POSTS} posts a week (you picked ${weeklyTotal}). Remove ${
+          weeklyTotal - MAX_WEEKLY_POSTS
+        } to continue.`,
+      );
+      return;
+    }
     update.mutate({
       channelId: id,
       adPriceCents: cents,
@@ -122,6 +147,7 @@ export function ChannelDetailPage() {
       autoApprovePosts: autoApprove,
       acceptAds,
       minAdPriceCents: minCents,
+      postingSchedule: schedule,
     });
   };
 
@@ -238,6 +264,34 @@ export function ChannelDetailPage() {
           <StatCard label="Your price" value={pricingLabel(c.pricingModel, c.adPriceCents)} icon={<Icon name="dollar" size={16} />} />
         </div>
 
+        {/* Posting schedule */}
+        <Card>
+          <CardTitle>Posting schedule</CardTitle>
+          {weeklySlotCount(c.postingSchedule) === 0 ? (
+            <p className="text-sm text-mute">
+              No posting schedule set — this channel accepts sponsored posts within the daily limits only.
+            </p>
+          ) : (
+            <>
+              <ul className="space-y-1.5">
+                {WEEKDAYS.map((day) => {
+                  const times = [...((c.postingSchedule ?? {})[String(day)] ?? [])].sort();
+                  if (times.length === 0) return null;
+                  return (
+                    <li key={day} className="flex items-start justify-between gap-3 text-sm">
+                      <span className="text-mute">{WEEKDAY_LABELS[day]}</span>
+                      <span className="text-right tabular-nums">{times.join(', ')}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-xs text-mute mt-3">
+                {weeklySlotCount(c.postingSchedule)} of {MAX_WEEKLY_POSTS} posts a week
+              </p>
+            </>
+          )}
+        </Card>
+
         {/* Stats history */}
         <Card>
           <CardTitle>Avg views — last {Math.max(c.stats.length, 1)} days</CardTitle>
@@ -353,6 +407,7 @@ export function ChannelDetailPage() {
               className="w-5 h-5 mt-0.5 shrink-0 accent-[var(--tg-theme-button-color,#2481cc)]"
             />
           </label>
+          <PostingScheduleEditor value={schedule} onChange={setSchedule} />
           <div className="flex gap-2 pt-1">
             <Button variant="secondary" full onClick={() => setEditOpen(false)}>
               Cancel

@@ -738,6 +738,13 @@ maxCampaignsPerHour Int? @map("max_campaigns_per_hour")
   maxPostsPerDay     Int                  @default(3) @map("max_posts_per_day")
   minHoursBetweenAds Int                  @default(4) @map("min_hours_between_ads")
 
+  /// The publisher's weekly posting schedule: weekday ("0" = Sunday) -> the
+  /// channel-local "HH:mm" times a sponsored post may go out at. NULL means no
+  /// schedule is set, and only maxPostsPerDay + minHoursBetweenAds apply. The
+  /// total across the week is capped at MAX_WEEKLY_POSTS (shared/src/schemas.ts);
+  /// the shape is validated there, so the DB stores it as-is.
+  postingSchedule Json? @map("posting_schedule")
+
   // Counters
   totalAdsPublished Int @default(0) @map("total_ads_published")
   totalEarnedCents  Int @default(0) @map("total_earned_cents")

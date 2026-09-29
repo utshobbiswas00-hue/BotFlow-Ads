@@ -269,6 +269,7 @@ async function runHouseFill(opts: { limit?: number; idleHours?: number }): Promi
       minHoursBetweenAds: true,
       maxPostsPerDay: true,
       maxCampaignsPerHour: true,
+      postingSchedule: true,
       adPosts: {
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -298,6 +299,7 @@ async function runHouseFill(opts: { limit?: number; idleHours?: number }): Promi
         maxPostsPerDay: channel.maxPostsPerDay,
         minHoursBetweenAds: channel.minHoursBetweenAds,
         maxCampaignsPerHour: channel.maxCampaignsPerHour ?? null,
+        postingSchedule: channel.postingSchedule,
       });
       if (!frequency.allowed) continue;
 

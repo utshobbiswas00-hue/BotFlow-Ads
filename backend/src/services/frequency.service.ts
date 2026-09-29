@@ -2,6 +2,7 @@ import { prisma } from '../db/prisma';
 import { businessRules } from './settings.service';
 import { entitlementsFor } from './premium.service';
 import { childLogger } from '../config/logger';
+import { msUntilAllowedSlot } from '../utils/postingSchedule';
 
 const log = childLogger('frequency');
 
@@ -186,6 +187,13 @@ export async function checkChannelFrequency(channel: {
    * per-hour campaign cap when the publisher left their own cap unset.
    */
   advertiserId?: string | null;
+  /**
+   * The publisher's weekly posting schedule (Channel.postingSchedule). When
+   * set, a post may only go out inside one of the times they picked for that
+   * weekday; outside them the job waits for the next slot. Typed loosely
+   * because it arrives as Prisma `JsonValue`; the helper validates it.
+   */
+  postingSchedule?: unknown;
 }): Promise<FrequencyCheckResult> {
   const now = Date.now();
   const hourAgo = new Date(now - HOUR_MS);
@@ -268,6 +276,15 @@ export async function checkChannelFrequency(channel: {
       oldest.createdAt.getTime() + DAY_MS - now,
       `this channel has reached the platform daily cap of ${platformCap} ads`,
     );
+  }
+
+  // 5) The publisher's own weekly schedule. Time is the one cadence limit the
+  //    publisher states explicitly, so it is enforced here rather than left to
+  //    the dispatcher: a post outside the chosen slots waits for the next one
+  //    instead of landing in the middle of their night.
+  const slotWaitMs = msUntilAllowedSlot(channel.postingSchedule, now);
+  if (slotWaitMs > 0) {
+    consider(slotWaitMs, 'this channel only accepts posts at the times its publisher scheduled');
   }
 
   if (reason !== undefined) {

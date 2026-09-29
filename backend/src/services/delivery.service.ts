@@ -247,6 +247,7 @@ export async function publishDeliveryJob(deliveryJobId: string): Promise<Publish
       maxPostsPerDay: channel.maxPostsPerDay,
       minHoursBetweenAds: channel.minHoursBetweenAds,
       maxCampaignsPerHour: channel.maxCampaignsPerHour ?? null,
+      postingSchedule: channel.postingSchedule,
       // Pass the advertiser so a premium advertiser's `maxCampaignsPerHour`
       // entitlement can raise the per-hour cap when the publisher left their own
       // cap unset. Optional + backward compatible: a free advertiser (pct-free
@@ -659,6 +660,7 @@ async function loadJob(deliveryJobId: string) {
           maxPostsPerDay: true,
           minHoursBetweenAds: true,
           maxCampaignsPerHour: true,
+          postingSchedule: true,
         },
       },
     },

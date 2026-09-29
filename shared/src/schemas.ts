@@ -19,6 +19,74 @@ export const channelCategorySchema = z.enum(CHANNEL_CATEGORIES);
 
 /* ---------- Channel ---------- */
 
+/* ---------------------------------------------------------------
+ *  Channel posting schedule
+ * --------------------------------------------------------------- */
+
+/** How many sponsored posts a channel may accept in a week. */
+export const MAX_WEEKLY_POSTS = 21;
+
+/** 0 = Sunday … 6 = Saturday, matching JavaScript's day numbering. */
+export const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+
+export const WEEKDAY_LABELS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+/** Weekday key ("0" = Sunday) -> the channel-local times a post may go out at. */
+export type PostingSchedule = Record<string, string[]>;
+
+/** Slots across the whole week — the figure the cap is measured against. */
+export function weeklySlotCount(schedule: PostingSchedule | null | undefined): number {
+  if (!schedule) return 0;
+  return Object.values(schedule).reduce((n, times) => n + (Array.isArray(times) ? times.length : 0), 0);
+}
+
+/** "HH:mm", 24-hour, zero-padded — the only shape a slot time may take. */
+export const postingTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time like 09:30');
+
+/**
+ * A publisher's weekly posting schedule.
+ *
+ * Enforced here — not only in the form — so the form and the API can never
+ * disagree about what a valid schedule is:
+ *   - at most MAX_WEEKLY_POSTS slots across the week
+ *   - no duplicate time within a day
+ *   - every time is HH:mm
+ *   - every key is a real weekday
+ */
+export const postingScheduleSchema = z
+  .record(z.string(), z.array(postingTimeSchema))
+  .superRefine((schedule, ctx) => {
+    const total = weeklySlotCount(schedule);
+    if (total > MAX_WEEKLY_POSTS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `A channel can accept at most ${MAX_WEEKLY_POSTS} posts a week (you picked ${total}).`,
+      });
+    }
+    for (const [day, times] of Object.entries(schedule)) {
+      if (!(WEEKDAYS as readonly number[]).map(String).includes(day)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown weekday "${day}".` });
+      }
+      if (new Set(times).size !== times.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate posting time on ${WEEKDAY_LABELS[Number(day)] ?? day}.`,
+        });
+      }
+    }
+  });
+
+
 export const addChannelSchema = z.object({
   channelUsername: z
     .string()
@@ -28,6 +96,9 @@ export const addChannelSchema = z.object({
   category: channelCategorySchema.default('OTHER'),
   language: z.string().min(2).max(8).default('en'),
   country: z.string().length(2).default('BD'),
+  /** The publisher's weekly posting schedule. Optional: a channel with none
+   *  falls back to `maxPostsPerDay` + `minHoursBetweenAds` alone. */
+  postingSchedule: postingScheduleSchema.optional(),
 });
 
 export const updateChannelSchema = z.object({
@@ -44,6 +115,8 @@ export const updateChannelSchema = z.object({
   // keeping the channel listed; `minAdPriceCents` is the publisher's floor.
   acceptAds: z.boolean().optional(),
   minAdPriceCents: z.number().int().min(0).optional(),
+  /** Replace the weekly posting schedule. Send `null` to clear it. */
+  postingSchedule: postingScheduleSchema.nullable().optional(),
 });
 
 /* ---------- Campaign ---------- */

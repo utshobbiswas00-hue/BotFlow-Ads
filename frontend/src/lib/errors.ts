@@ -25,6 +25,8 @@ const CODE_MESSAGES: Record<string, string> = {
   CHANNEL_NOT_ELIGIBLE:
     'This channel is not eligible for ads yet — it may still be in review or below the minimums.',
   MAINTENANCE: 'We are doing scheduled maintenance. Please try again in a few minutes.',
+  SCHEMA_OUT_OF_DATE:
+    'The app is being updated right now. Please try again in a minute — nothing you did caused this.',
   PAYMENT_DUPLICATE: 'This payment was already applied to your account — no double charge was made.',
 };
 

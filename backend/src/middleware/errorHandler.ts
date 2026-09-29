@@ -125,7 +125,9 @@ export function errorHandler(
   });
 }
 
-function mapPrismaError(err: Prisma.PrismaClientKnownRequestError): {
+/** Exported for tests: this mapping is the difference between an operator
+ *  seeing "Database error" and knowing to run the migrations. */
+export function mapPrismaError(err: Prisma.PrismaClientKnownRequestError): {
   status: number;
   code: string;
   message: string;
@@ -141,6 +143,18 @@ function mapPrismaError(err: Prisma.PrismaClientKnownRequestError): {
       return { status: 404, code: ERROR_CODES.NOT_FOUND, message: 'Record not found' };
     case 'P2034':
       return { status: 409, code: ERROR_CODES.CONFLICT, message: 'Write conflict, please retry' };
+    // P2021 missing table / P2022 missing column. In practice this is always a
+    // deploy that shipped code ahead of its migrations, which is a deploy
+    // problem rather than a bad request — 503 says "try again shortly" and the
+    // message names the fix instead of reading as a generic "Database error".
+    // The prisma code itself is logged by the caller.
+    case 'P2021':
+    case 'P2022':
+      return {
+        status: 503,
+        code: ERROR_CODES.SCHEMA_OUT_OF_DATE,
+        message: 'The database is behind this release. Apply the pending migrations (prisma migrate deploy) and retry.',
+      };
     default:
       return { status: 500, code: ERROR_CODES.INTERNAL_ERROR, message: 'Database error' };
   }

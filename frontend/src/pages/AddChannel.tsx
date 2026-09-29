@@ -168,9 +168,14 @@ export function AddChannelPage() {
         <Card className="space-y-2">
           <h3 className="text-sm font-semibold">How it works</h3>
           <ol className="text-sm text-mute space-y-1.5 list-decimal list-inside">
-            <li>Submit the channel — no admin rights needed yet.</li>
-            <li>Add the BotFlow bot as an admin (one tap on the next screen).</li>
-            <li>Once approved, sponsorship requests appear in your inbox.</li>
+            <li>
+              Add @BotflowadsBot to your channel as an administrator, with "Post Messages" switched on.
+            </li>
+            <li>Pick the days and times you will accept a sponsored post — up to 21 a week.</li>
+            <li>
+              Press Verify Channel. Your channel goes live straight away; there is no approval queue.
+            </li>
+            <li>Sponsorship requests then arrive in your inbox.</li>
           </ol>
         </Card>
 

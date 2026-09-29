@@ -1,0 +1,206 @@
+# ============================================================================
+#  BOTFLOW ADS — Render Blueprint (Infrastructure as Code)
+#
+#  Topology: 1 Postgres (botflow-db) + 1 Redis (botflow-kv) + 3 services:
+#    botflow-api    (web)     Express API + grammY bot + Telegram webhook
+#    botflow-worker (worker)  BullMQ worker — ALL scheduled/delayed work
+#    botflow-app    (static)  React Telegram Mini App (SPA)
+#
+#  WHY THE BOT MUST USE A WEBHOOK — NEVER LONG-POLLING — ON RENDER:
+#    Render web services are stateless containers. They scale to zero when
+#    idle and are replaced on every deploy. Long polling holds one persistent
+#    outbound getUpdates() connection per bot: (1) it is dropped the moment
+#    the container spins down or restarts, so updates are simply lost while
+#    the instance is asleep, (2) with more than one instance two pollers
+#    would fight Telegram over the same bot, and (3) a single hung HTTP
+#    connection keeps the instance from ever idling. The webhook is the
+#    opposite: Telegram POSTs updates to ${APP_URL}/webhook/telegram, every
+#    request is independent and stateless, any number of instances can
+#    serve it, and nothing needs to stay awake. In production
+#    (NODE_ENV=production) the API registers the webhook on boot via
+#    setupWebhook() with the X-Telegram-Bot-Api-Secret-Token (set in
+#    TELEGRAM_WEBHOOK_SECRET) verified on every update.
+#
+#  WHY SCHEDULED DELIVERY MUST BE BULLMQ DELAYED JOBS — NEVER IN-PROCESS TIMERS:
+#    A setTimeout / setInterval / node-cron timer lives inside one process.
+#    On Render that process sleeps when idle and is destroyed on every
+#    deploy or autoscale event, so every scheduled post would silently stop
+#    firing. Instead, every delivery is a delayed BullMQ job persisted in
+#    Redis (botflow-kv), and the always-on botflow-worker service executes
+#    it at the right time. The repeatable "sweep" jobs registered by the
+#    worker are only a safety net for lost queue entries — the delayed jobs
+#    are the primary timing mechanism. This is why botflow-worker must run
+#    24/7 and must never be a free-spinning instance.
+#
+#  WORKER INSTANCE TYPE — VERIFY BEFORE DEPLOYING:
+#    The worker is the only truly always-on service. Depending on the
+#    current Render plans, a free-tier worker instance may not run 24/7
+#    and may sleep after inactivity — which would break scheduled
+#    delivery. Check the Render dashboard for current plans and pricing
+#    and put botflow-worker on a plan that guarantees continuous
+#    operation. Do not hard-code pricing here; it changes.
+# ============================================================================
+
+databases:
+  - name: botflow-db
+    type: ps
+    plan: starter
+    region: singapore
+    # Empty list = no IP restriction. Tighten to your service instances
+    # once the blueprint has created them.
+    ipAllowList: []
+
+services:
+  # ------------------------------------------------------------------ API --
+  - type: web
+    name: botflow-api
+    runtime: node
+    plan: starter
+    region: singapore
+    autoDeploy: true
+    # The Mini App SPA is built here too: `src/app.ts` serves frontend/dist from
+    # this service, so the Mini App and the API share ONE origin — no CORS
+    # allowlist, no build-time VITE_API_URL, no second static-site service.
+    # If the SPA build step is removed the API still boots; it just logs
+    # "frontend/dist not found" and serves API-only.
+    buildCommand: npm ci --include=dev && npx prisma generate --schema backend/prisma/schema.prisma && npm run build -w @botflow/shared && npm run build -w @botflow/backend && npm run build -w @botflow/frontend
+    startCommand: npm run start:api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: botflow-db
+          property: connectionString
+      - key: REDIS_URL
+        fromKeyvalue:
+          name: botflow-kv
+          property: connectionString
+      # --- deployment-specific URLs (set in the Render dashboard) ---------
+      # APP_URL must be the public URL of THIS service: it is used to
+      # register the Telegram webhook on boot and to build the public
+      # click-tracking links (/c/<slug>).
+      - key: APP_URL
+        sync: false
+      # The URL users reach for the Mini App (botflow-app service URL).
+      - key: MINI_APP_URL
+        sync: false
+      # Where /admin lives (same static site, different path).
+      - key: ADMIN_PANEL_URL
+        sync: false
+      # --- secrets (never commit; fill in the Render dashboard) -----------
+      # Bot token from @BotFather.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # The bot's username as returned by getMe (e.g. BotflowadsBot).
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      # Random secret sent to Telegram in setWebhook(secret_token); every
+      # webhook update must carry it as X-Telegram-Bot-Api-Secret-Token.
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      # Comma-separated Telegram user IDs that get SUPER_ADMIN on /start.
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false
+      # Long random string; signs JWTs.
+      - key: JWT_SECRET
+        sync: false
+      # 64 hex chars (or arbitrary string — it is hashed); AEAD key for
+      # encrypted fields.
+      - key: ENCRYPTION_KEY
+        sync: false
+      # --- crypto deposits ----------------------------------------------------
+      # JSON-RPC endpoints per EVM chain, e.g.
+      # {"USDT_BEP20":"https://...","USDT_ERC20":"https://..."}
+      #
+      # Empty means no chain is scanned: nothing is defaulted to a real endpoint
+      # on purpose. Transfers on an unscanned chain wait in the admin queue
+      # rather than being lost, and TRON/TON are not covered here at all.
+      - key: CRYPTO_RPC_URLS
+        value: '{}'
+      # --- operational -----------------------------------------------------
+      - key: TZ
+        value: Asia/Dhaka
+      - key: LOG_LEVEL
+        value: info
+
+  # ---------------------------------------------------------------- WORKER --
+  # Always-on. Executes every BullMQ queue (delivery, scheduler, permission,
+  # stats, payout, withdrawal, fraud, notification, cleanup). Same code and
+  # build as the API; only the entry point differs (src/workers/index.ts).
+  - type: worker
+    name: botflow-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    autoDeploy: true
+    buildCommand: npm ci --include=dev && npx prisma generate --schema backend/prisma/schema.prisma && npm run build -w @botflow/shared && npm run build -w @botflow/backend
+    startCommand: npm run start:worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: botflow-db
+          property: connectionString
+      - key: REDIS_URL
+        fromKeyvalue:
+          name: botflow-kv
+          property: connectionString
+      # Needed by the delivery worker to build public tracking URLs.
+      - key: APP_URL
+        sync: false
+      # Needed to send Telegram notifications / admin alerts.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      # The worker is what runs the crypto deposit scan, so it needs the chain
+      # endpoints as well as the API does. Same value on both services.
+      - key: CRYPTO_RPC_URLS
+        value: '{}'
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false
+      # Needed for IP/user-agent hashing and any encrypted payload.
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Needed for gateway-side processing of deposits/withdrawals.
+      - key: PAYMENT_WEBHOOK_SECRET
+        sync: false
+      - key: TZ
+        value: Asia/Dhaka
+      - key: LOG_LEVEL
+        value: info
+
+  # ------------------------------------------------------------------ APP ---
+  # The Telegram Mini App (React + Vite SPA). Built from source; the
+  # Vite build inlines VITE_API_URL, so it is a build-time env var.
+  - type: web
+    name: botflow-app
+    runtime: static
+    region: singapore
+    autoDeploy: true
+    buildCommand: npm ci --include=dev && npm run build -w @botflow/shared && npm run build -w @botflow/frontend
+    staticPublishPath: ./frontend/dist
+    routes:
+      # Single-page app: any path that is not a real file falls back to
+      # the SPA, which routes client-side (react-router).
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Must be the public URL of botflow-api in production, e.g.
+      # https://botflow-api.onrender.com (no trailing slash).
+      - key: VITE_API_URL
+        sync: false
+
+  # --------------------------------------------------------------- REDIS ----
+  # BullMQ queue storage + rate-limit counters + idempotency locks.
+  # The API and the worker connect to the same instance (REDIS_URL).
+  - type: keyvalue
+    name: botflow-kv
+    plan: starter
+    region: singapore

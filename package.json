@@ -1,0 +1,38 @@
+{
+  "name": "botflow-ads",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BotFlow Ads — Telegram-native Sponsored Post Ads Network",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "npm ci --include=dev && npm run db:generate && npm run build -w @botflow/shared && npm run build -w @botflow/backend && npm run build -w @botflow/frontend",
+    "build:backend": "npm run build -w @botflow/backend",
+    "build:frontend": "npm run build -w @botflow/frontend",
+    "start:api": "npm run start -w @botflow/backend",
+    "start:worker": "npm run worker -w @botflow/backend",
+    "dev:api": "npm run dev -w @botflow/backend",
+    "dev:worker": "npm run dev:worker -w @botflow/backend",
+    "dev:frontend": "npm run dev -w @botflow/frontend",
+    "db:generate": "npm run db:generate -w @botflow/backend",
+    "db:migrate": "npm run db:migrate -w @botflow/backend",
+    "db:deploy": "npm run db:deploy -w @botflow/backend",
+    "db:seed": "npm run db:seed -w @botflow/backend",
+    "db:studio": "npm run db:studio -w @botflow/backend",
+    "typecheck": "npm run typecheck -w @botflow/backend && npm run typecheck -w @botflow/frontend",
+    "lint": "npm run lint -w @botflow/backend",
+    "test": "npm run test -w @botflow/frontend && npm run test -w @botflow/backend",
+    "test:unit": "npm run test:unit -w @botflow/backend && npm run test -w @botflow/frontend",
+    "test:integration": "npm run test -w @botflow/backend",
+    "setup": "npm install && npm run db:generate && npm run db:deploy && npm run db:seed",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  }
+}

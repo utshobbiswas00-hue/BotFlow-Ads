@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0B1026" />
+    <meta
+      name="description"
+      content="BotFlow Ads — the Telegram sponsored-post ad network. Advertise your channel, monetize your audience."
+    />
+
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="BotFlow Ads" />
+    <meta property="og:description" content="Advertise. Monetize. Grow." />
+    <meta property="og:image" content="/icon-512.png" />
+
+    <title>BotFlow Ads</title>
+
+    <!-- Telegram Mini App SDK. Must load before the app bundle so window.Telegram
+         is available to src/lib/telegram.ts on first render. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

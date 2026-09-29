@@ -1,0 +1,36 @@
+-- Seed the crypto deposit addresses supplied by the operator.
+--
+-- A data migration rather than a seed script on purpose: `prisma migrate deploy`
+-- runs on every deploy, so the addresses land with no manual step, and
+-- ON CONFLICT DO NOTHING means an operator who later edits a wallet from the
+-- admin panel will NOT have that change reverted by a subsequent deploy.
+--
+-- These are PUBLIC receiving addresses, not secrets — anything that really
+-- is a secret belongs in the environment, never in a migration.
+--
+-- Note: USDT_ERC20 and USDT_BEP20 intentionally share one address. An EVM
+-- address is the same key on both chains, so that is correct rather than a
+-- copy-paste slip.
+--
+-- Deliberately NOT seeded (they were not supplied, and an address we do not have
+-- must be ABSENT from the deposit screen rather than shown blank):
+--   USDT_TON, USDC_TON, USDC_TRC20, USDC_ERC20, BTC
+
+-- Column names follow what the schema actually created: `isActive` stays
+-- camelCase (no @map on that field) while the timestamps are mapped to
+-- snake_case. Quoting matters — `is_active` does not exist.
+-- NOTE (2026-09-26 hardening): the INSERT below is deliberately disabled.
+-- A data migration runs on EVERY environment that deploys this repo,
+-- including staging and CI, so committing the operator's live receiving
+-- addresses here made every deployment advertise the operator's real
+-- wallets. Add addresses per environment instead, from the admin panel
+-- (POST /api/admin/crypto-addresses) or with a one-off psql statement.
+-- The previous statements are kept, commented, for reference only.
+
+--  ("id", "network", "address", "label", "isActive", "created_at", "updated_at")
+-- VALUES
+--   ('seed_ton_main',       'TON',          'UQAe-vo66AhqzOc9lvioLpltXLIeZ9IdBttTCMFBWHvXrXKw', 'TON main',         true, now(), now()),
+--   ('seed_usdt_trc20',     'USDT_TRC20',   'TC4utPWPZWB35Sx4WFmAxKUKP6QtZMqDqk',              'USDT TRC20',      true, now(), now()),
+--   ('seed_usdt_bep20',     'USDT_BEP20',   '0xA3CD7A4DC9Ef643837E0E48DC605f98d5Ac6b78b',      'USDT BEP20',      true, now(), now()),
+--   ('seed_usdt_erc20',     'USDT_ERC20',   '0xA3CD7A4DC9Ef643837E0E48DC605f98d5Ac6b78b',      'USDT ERC20 (ETH)', true, now(), now())
+-- ON CONFLICT ("network") DO NOTHING;

@@ -1,0 +1,222 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tg-theme-bg-color: #f3f4f6;
+  --tg-theme-secondary-bg-color: #ffffff;
+  --tg-theme-section-bg-color: #ffffff;
+  --tg-theme-text-color: #111827;
+  --tg-theme-hint-color: #6b7280;
+  --tg-theme-subtitle-text-color: #6b7280;
+  --tg-theme-outline-color: #e5e7eb;
+  --tg-theme-button-color: #2481cc;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-link-color: #2481cc;
+  --tg-theme-section-header-text-color: #2481cc;
+  --tg-theme-destructive-text-color: #dc2626;
+}
+
+/* ---------------------------------------------------------------------------
+ * Telegram Mini App theming.
+ *
+ * Inside Telegram, the runtime injects `--tg-theme-*` custom properties onto
+ * <body> for the active color scheme, so everything below adapts on its own.
+ * `.tg-dark` is the explicit dark-mode hook (applied when
+ * `window.Telegram?.WebApp?.colorScheme === 'dark'`): it provides dark
+ * fallbacks for when the app is opened outside Telegram, where Telegram's
+ * runtime variables are absent.
+ * --------------------------------------------------------------------------- */
+body,
+.tg-dark {
+  --app-bg: var(--tg-theme-bg-color, #f3f4f6);
+  --app-text: var(--tg-theme-text-color, #111827);
+  --app-hint: var(--tg-theme-hint-color, #6b7280);
+  --app-button: var(--tg-theme-button-color, #2481cc);
+  --app-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --app-secondary-bg: var(--tg-theme-secondary-bg-color, #ffffff);
+
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+
+.tg-dark {
+  /* Dark fallbacks mirroring Telegram's default dark theme palette. */
+  --app-bg: var(--tg-theme-bg-color, #0e1621);
+  --app-text: var(--tg-theme-text-color, #f5f5f5);
+  --app-hint: var(--tg-theme-hint-color, #708499);
+  --app-button: var(--tg-theme-button-color, #8774e1);
+  --app-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --app-secondary-bg: var(--tg-theme-secondary-bg-color, #17212b);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  /* background-color / color come from the Telegram theme block above
+     (so .tg-dark fallbacks win); only the font stack is reset here. */
+  @apply antialiased;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* Bottom padding that respects the iOS home indicator / browser UI, so
+   sticky bars and content are never hidden behind the safe area. */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---------------------------------------------------------------------------
+ * BotFlow brand layer.
+ *
+ * Telegram owns surfaces and chrome (see the theme block above). Everything in
+ * this section sits ON TOP of that: ad-network identity, money semantics and
+ * chart tokens. No rule here overrides a `--tg-theme-*` value, so the app still
+ * looks native inside Telegram in both light and dark mode.
+ * --------------------------------------------------------------------------- */
+
+/* Figures must never reflow as they tick. Tabular numerals keep KPI columns and
+ * money values optically aligned — the detail that makes a dashboard readable. */
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Every monetary amount is an integer count of cents, so the same digits appear
+   constantly. Use .num on any element rendering money, views or counts. */
+
+/* Brand hero — the primary balance / earnings card.
+   The three stops are sampled straight from the logo artwork, which runs
+   deep blue -> blue -> cyan, so the UI and the mark read as one identity. */
+.brand-hero {
+  position: relative;
+  isolation: isolate;
+  background-image: linear-gradient(135deg, #0048f0 0%, #0090f0 48%, #00d8f0 100%);
+  color: #ffffff;
+}
+.brand-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background-image: radial-gradient(
+    120% 120% at 0% 0%,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  pointer-events: none;
+}
+
+/* Earn card — used for publisher revenue surfaces. */
+.earn-hero {
+  position: relative;
+  isolation: isolate;
+  background-image: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: #ffffff;
+}
+
+/* Money semantics. Colour alone is never the only signal — always pair these
+   with an explicit +/- sign in the markup for colour-blind users. */
+.money-pos {
+  color: #10b981;
+}
+.money-neg {
+  color: #ef4444;
+}
+
+/* Chart surface: dashed grid, no heavy axes. */
+.chart-grid line {
+  stroke: var(--tg-theme-outline-color, #e5e7eb);
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+.chart-grid path.domain {
+  display: none;
+}
+
+/* Skeleton shimmer for loading states.
+   Keyframes are declared here rather than relying on the Tailwind config,
+   because Tailwind only emits `@keyframes` for animation utilities it can
+   actually see used in the markup. */
+@keyframes botflow-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.35),
+    transparent
+  );
+  animation: botflow-shimmer 1.4s infinite;
+}
+
+/* Live status dot — used for "running campaign" / "approved channel". */
+.live-dot {
+  position: relative;
+}
+.live-dot::before {
+  content: '';
+  position: absolute;
+  left: -0.75rem;
+  top: 50%;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-top: -0.2rem;
+  border-radius: 9999px;
+  background-color: currentColor;
+  box-shadow: 0 0 0 3px currentColor;
+  opacity: 0.25;
+}
+
+/* Keyboard focus must stay visible for the Mini App's desktop/test builds,
+   where the app is opened in a normal browser tab. */
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+/* Honour users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

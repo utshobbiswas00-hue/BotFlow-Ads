@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "deposits" ADD COLUMN     "fee_bps" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "fee_cents" INTEGER NOT NULL DEFAULT 0;

@@ -1,0 +1,89 @@
+:root {
+  --bg-rgb: 10 10 10;
+  --card-rgb: 20 20 20;
+  --fg-rgb: 250 250 250;
+  --mut-rgb: 138 138 138;
+  --ln-rgb: 42 42 42;
+  color-scheme: dark;
+}
+
+:root[data-scheme='light'] {
+  --bg-rgb: 255 255 255;
+  --card-rgb: 247 247 247;
+  --fg-rgb: 10 10 10;
+  --mut-rgb: 107 107 107;
+  --ln-rgb: 229 229 229;
+  color-scheme: light;
+}
+
+body,
+.tg-dark {
+  --tg-theme-bg-color: rgb(var(--bg-rgb)) !important;
+  --tg-theme-secondary-bg-color: rgb(var(--card-rgb)) !important;
+  --tg-theme-section-bg-color: rgb(var(--card-rgb)) !important;
+  --tg-theme-text-color: rgb(var(--fg-rgb)) !important;
+  --tg-theme-hint-color: rgb(var(--mut-rgb)) !important;
+  --tg-theme-subtitle-text-color: rgb(var(--mut-rgb)) !important;
+  --tg-theme-outline-color: rgb(var(--ln-rgb)) !important;
+  --tg-theme-button-color: rgb(var(--fg-rgb)) !important;
+  --tg-theme-button-text-color: rgb(var(--bg-rgb)) !important;
+  --tg-theme-link-color: rgb(var(--fg-rgb)) !important;
+  --tg-theme-section-header-text-color: rgb(var(--mut-rgb)) !important;
+  --app-bg: rgb(var(--bg-rgb));
+  --app-text: rgb(var(--fg-rgb));
+  --app-hint: rgb(var(--mut-rgb));
+  --app-button: rgb(var(--fg-rgb));
+  --app-button-text: rgb(var(--bg-rgb));
+  --app-secondary-bg: rgb(var(--card-rgb));
+  background-color: rgb(var(--bg-rgb));
+  color: rgb(var(--fg-rgb));
+}
+
+.num {
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.brand-hero,
+.earn-hero {
+  background-image: none !important;
+  background-color: rgb(var(--card-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--ln-rgb));
+  color: rgb(var(--fg-rgb));
+}
+.brand-hero::after {
+  display: none;
+}
+.brand-hero [class*='text-white'],
+.earn-hero [class*='text-white'] {
+  color: rgb(var(--fg-rgb)) !important;
+}
+.brand-hero [class*='text-white/'],
+.earn-hero [class*='text-white/'] {
+  color: rgb(var(--mut-rgb)) !important;
+}
+.brand-hero [class*='bg-white'],
+.earn-hero [class*='bg-white'] {
+  background-color: rgb(var(--fg-rgb) / 0.08) !important;
+}
+
+.money-pos {
+  color: rgb(var(--fg-rgb)) !important;
+}
+.money-neg {
+  color: rgb(var(--mut-rgb)) !important;
+}
+
+.chart-grid line {
+  stroke: rgb(var(--ln-rgb));
+}
+
+.shimmer::after {
+  background-image: linear-gradient(90deg, transparent, rgb(var(--fg-rgb) / 0.08), transparent) !important;
+}
+
+:focus-visible {
+  outline: 1px solid rgb(var(--fg-rgb)) !important;
+  outline-offset: 2px;
+}

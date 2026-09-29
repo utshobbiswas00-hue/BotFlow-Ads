@@ -3,6 +3,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { createApp } from './app';
 import { prisma } from './db/prisma';
+import { runMigrationsOnBoot } from './db/migrate';
 import { redis, pingRedis, gracefulRedisShutdown } from './db/redis';
 import { closeQueues } from './queues/queue';
 import { setupWebhook } from './bot/webhook';
@@ -86,6 +87,9 @@ async function shutdown(signal: string, server: http.Server): Promise<void> {
 
 async function main(): Promise<void> {
   await verifyInfrastructure();
+
+  // Make sure the schema is current even if the start command skipped it.
+  runMigrationsOnBoot();
 
   // Seed the default membership plans so the Premium page has something to sell.
   // Best-effort and non-fatal: if the table is briefly unavailable the API must

@@ -5,6 +5,7 @@ import { queryClient } from './lib/queryClient';
 import { initTelegram } from './lib/telegram';
 import App from './App';
 import './index.css';
+import './mono-theme.css';
 
 /*
  * NOTE: there is deliberately NO <BrowserRouter> here.

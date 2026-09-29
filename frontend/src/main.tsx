@@ -8,6 +8,20 @@ import './index.css';
 import './mono-theme.css';
 
 /*
+ * MUST run before the first render.
+ *
+ * initTelegram() is what hands the app to the Telegram SDK: it captures the
+ * WebApp instance, calls ready()/expand() and wires the theme and chrome
+ * colours. Without it the app never sees the SDK, every request goes out
+ * without `x-telegram-init-data`, and the first thing the user sees is
+ * "You are not signed in. Reopen the app from the Telegram bot to log in
+ * again." — advice that cannot help, because there is nothing to reopen
+ * differently. It was dropped in b38a488 and only the stylesheet import came
+ * back in 4a5b81c, which is how the Mini App ended up unusable.
+ */
+initTelegram();
+
+/*
  * NOTE: there is deliberately NO <BrowserRouter> here.
  *
  * App renders a <RouterProvider> built from createBrowserRouter (see

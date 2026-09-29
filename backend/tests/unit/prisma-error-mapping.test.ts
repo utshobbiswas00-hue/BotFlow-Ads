@@ -18,7 +18,10 @@ describe('mapPrismaError', () => {
       const mapped = mapPrismaError(known(code));
       expect(mapped.status).toBe(503);
       expect(mapped.code).toBe('SCHEMA_OUT_OF_DATE');
-      expect(mapped.message).toMatch(/migrate deploy/);
+      // The client is told to retry; the tooling hint belongs in the log, not
+      // on the screen of whoever is holding the phone.
+      expect(mapped.message).toMatch(/try again/i);
+      expect(mapped.message).not.toMatch(/prisma|migrate/i);
     }
   });
 

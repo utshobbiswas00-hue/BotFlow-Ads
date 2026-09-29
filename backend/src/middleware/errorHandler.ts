@@ -150,10 +150,14 @@ export function mapPrismaError(err: Prisma.PrismaClientKnownRequestError): {
     // The prisma code itself is logged by the caller.
     case 'P2021':
     case 'P2022':
+      // The caller logs the Prisma code and the raw message, which is where an
+      // operator should read "run prisma migrate deploy". What travels back to
+      // the client is read by whoever is holding the phone, and their only
+      // useful move is to try again — so say that, and nothing about tooling.
       return {
         status: 503,
         code: ERROR_CODES.SCHEMA_OUT_OF_DATE,
-        message: 'The database is behind this release. Apply the pending migrations (prisma migrate deploy) and retry.',
+        message: 'The app is being updated right now. Please try again in a minute.',
       };
     default:
       return { status: 500, code: ERROR_CODES.INTERNAL_ERROR, message: 'Database error' };

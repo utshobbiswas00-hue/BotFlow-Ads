@@ -129,8 +129,8 @@ export function AddChannelPage() {
           <div className="flex items-start gap-3 bg-app rounded-xl px-3.5 py-3">
             <Icon name="info" size={18} className="text-link shrink-0 mt-0.5" />
             <p className="text-xs text-mute leading-relaxed">
-              Your channel must be a <b>public</b> Telegram channel. You can submit it now and add the BotFlow
-              bot as an admin afterwards — we'll walk you through that on the next screen.
+              Your channel must be a <b>public</b> Telegram channel. Add @BotflowadsBot as an admin with
+              &quot;Post Messages&quot; switched on <b>first</b>, then press Verify Channel.
             </p>
           </div>
           <Input

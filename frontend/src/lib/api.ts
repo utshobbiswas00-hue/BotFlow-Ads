@@ -1,6 +1,6 @@
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import type { ApiResponse, ApiSuccess } from '@botflow/shared';
-import { getInitData } from './telegram';
+import { getInitData, whenTelegramReady } from './telegram';
 
 /**
  * Absolute origin of the API.
@@ -41,7 +41,12 @@ const http = axios.create({
 });
 
 /* Inject Telegram auth header on every request. */
-http.interceptors.request.use((config) => {
+http.interceptors.request.use(async (config) => {
+  // The first request of a session can beat the SDK into existence. Waiting a
+  // moment here is the difference between a signed-in app and a 401 that
+  // outlives every retry; the wait is capped and happens at most once per load.
+  if (!getInitData()) await whenTelegramReady(2_000);
+
   const initData = getInitData();
   if (initData) {
     config.headers.set('x-telegram-init-data', initData);

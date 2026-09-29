@@ -187,6 +187,16 @@ export function telegramAuth(options: TelegramAuthOptions = {}) {
 
       next();
     } catch (err) {
+      // Say WHY. "No initData at all" (the Mini App was opened outside Telegram,
+      // or the SDK had not loaded yet) and "signature does not match" (the
+      // server's bot token is not the one the app was launched from) look
+      // identical on the user's screen, and only one of them is theirs to fix.
+      // Neither message carries a secret.
+      if (err instanceof InvalidTelegramAuthError) {
+        logger.warn({ reason: err.message, path: req.path }, 'telegram auth rejected');
+      } else if (err instanceof UnauthorizedError) {
+        logger.warn({ reason: 'no initData on the request', path: req.path }, 'telegram auth rejected');
+      }
       next(err);
     }
   };

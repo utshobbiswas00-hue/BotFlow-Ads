@@ -2,15 +2,60 @@ import type { TelegramThemeParams, TelegramWebApp } from '../vite-env';
 import '../mono-theme.css';
 
 let webApp: TelegramWebApp | null = null;
+let ready: Promise<void> | null = null;
+
+/**
+ * Read the SDK live, never from a snapshot.
+ *
+ * `window.Telegram.WebApp` is injected by the native client and ALSO fetched as
+ * a script, so it is not always there the instant the bundle runs. Capturing it
+ * once at startup meant an app that lost that race stayed signed out for the
+ * whole session: every request carried an empty `x-telegram-init-data`, and
+ * "Try again" could never help because the header was still built from the same
+ * null snapshot.
+ */
+function sdk(): TelegramWebApp | null {
+  if (typeof window === 'undefined') return null;
+  return window.Telegram?.WebApp ?? null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /** True when running inside the Telegram client WebView. */
 export function isTelegram(): boolean {
-  return webApp !== null;
+  return sdk() !== null || webApp !== null;
 }
 
 /** Raw initData string sent on every API request. */
 export function getInitData(): string {
-  return webApp?.initData ?? '';
+  return sdk()?.initData ?? webApp?.initData ?? '';
+}
+
+/**
+ * Resolve once the Telegram SDK is available, or once the wait is over.
+ *
+ * The wait happens at most once per page load: afterwards this resolves
+ * immediately, and `getInitData()` still reads the SDK live, so a still-later
+ * SDK is picked up by the next request rather than costing every request a
+ * delay (outside Telegram there is never an SDK, and nothing may hang on it).
+ */
+export function whenTelegramReady(timeoutMs = 5_000): Promise<void> {
+  const now = sdk();
+  if (now) {
+    wire(now);
+    return Promise.resolve();
+  }
+  if (!ready) {
+    ready = (async () => {
+      const deadline = Date.now() + timeoutMs;
+      while (!sdk() && Date.now() < deadline) await sleep(100);
+      const tg = sdk();
+      if (tg) wire(tg);
+    })();
+  }
+  return ready;
 }
 
 /** Map Telegram themeParams onto our CSS variables (with light fallbacks in CSS). */
@@ -52,9 +97,19 @@ function isDarkColor(hex: string): boolean {
  * themeParams wiring. Call once from the app entrypoint. Safe outside Telegram.
  */
 export function initTelegram(): void {
-  const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined;
-  applyMonoScheme(tg);
-  if (!tg) return;
+  const tg = sdk();
+  applyMonoScheme(tg ?? undefined);
+  if (tg) {
+    wire(tg);
+    return;
+  }
+  // Not available yet — keep looking instead of writing off the whole session.
+  void whenTelegramReady();
+}
+
+/** Wire an SDK instance once: ready(), expand(), theme and chrome. */
+function wire(tg: TelegramWebApp): void {
+  if (webApp === tg) return;
   webApp = tg;
   try {
     tg.ready();

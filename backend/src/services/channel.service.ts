@@ -98,19 +98,14 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
     throw new ValidationError('Only Telegram channels can be added. Groups are not supported for ad delivery.');
   }
 
-  // 2. The bot's rights are the gate, not a later review step.
-  //
-  //    There is no PENDING stage: a channel either has the bot as an
-  //    administrator with "Post Messages" and is therefore deliverable, or it
-  //    is not added at all and the owner is told to grant the rights first.
-  //    That keeps `ChannelStatus` honest — an APPROVED channel here means
-  //    "sponsored posts can actually go out right now" — and removes the
-  //    half-added row that used to sit in the owner's list waiting for a
-  //    permission that may never come.
+  // 2. Record the bot's rights, but never block submission on them. The
+  //    owner can add the bot afterwards — the "Open access" banner on the
+  //    channel page (and Telegram's own my_chat_member push) carries it from
+  //    PENDING to APPROVED the moment the bot actually gets those rights, so
+  //    nobody has to retry this form once Telegram is sorted out.
   //
   //    `checkBotPermissions` never throws — a lookup failure reads as "not
-  //    admin yet" — so a Telegram hiccup produces the same clear instruction
-  //    rather than a 500.
+  //    admin yet" — so a Telegram hiccup here never turns into a 500.
   const perms = await checkBotPermissions(chat.id);
   const botReady = perms.botIsAdmin && perms.canPostMessages;
 
@@ -121,13 +116,6 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
     where: { telegramChannelId: chat.id },
     select: { id: true, ownerId: true, status: true },
   });
-
-  if (!botReady && !existing) {
-    throw new ValidationError(
-      `@BotflowadsBot is not an administrator of "${chat.title}" with the "Post Messages" permission yet. ` +
-        'Add the bot as an administrator (Post Messages ON), then press Verify Channel again.',
-    );
-  }
 
   if (existing) {
     if (existing.ownerId !== ownerId) {
@@ -179,8 +167,10 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
       language: input.language ?? 'en',
       country: input.country ?? 'BD',
       subscriberCount: chat.memberCount ?? 0,
-      // No PENDING: reaching this line means the bot already has the rights.
-      status: 'APPROVED',
+      // APPROVED only if the bot already has the rights; otherwise PENDING —
+      // the "Open access" banner and the my_chat_member webhook take it from
+      // there the moment the owner finishes granting access in Telegram.
+      status: botReady ? 'APPROVED' : 'PENDING',
       ...(input.postingSchedule !== undefined ? { postingSchedule: input.postingSchedule } : {}),
       botIsAdmin: perms.botIsAdmin,
       canPostMessages: perms.canPostMessages,
@@ -189,8 +179,7 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
       lastPermissionCheck: new Date(),
       adPriceCents: defaultPrice,
       pricingModel: 'FIXED',
-      approvedAt: new Date(),
-      verifiedAt: new Date(),
+      ...(botReady ? { approvedAt: new Date(), verifiedAt: new Date() } : {}),
     },
     select: CHANNEL_SELECT,
   });

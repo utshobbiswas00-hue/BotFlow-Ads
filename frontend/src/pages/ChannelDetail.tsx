@@ -208,7 +208,7 @@ export function ChannelDetailPage() {
                   showToast('error', 'Could not open Telegram right now — try again in a moment');
                   return;
                 }
-                const rights = ['post_messages', 'edit_messages', 'delete_messages'].join('+');
+                const rights = ['post_messages', 'edit_messages', 'invite_users'].join(',');
                 openTelegramLink(`https://t.me/${appConfig.data.botUsername}?startchannel&admin=${rights}`);
               }}
             >

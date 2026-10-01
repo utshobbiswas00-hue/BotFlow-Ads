@@ -129,8 +129,8 @@ export function AddChannelPage() {
           <div className="flex items-start gap-3 bg-app rounded-xl px-3.5 py-3">
             <Icon name="info" size={18} className="text-link shrink-0 mt-0.5" />
             <p className="text-xs text-mute leading-relaxed">
-              Your channel must be a <b>public</b> Telegram channel. Add @BotflowadsBot as an admin with
-              &quot;Post Messages&quot; switched on <b>first</b>, then press Verify Channel.
+              Your channel must be a <b>public</b> Telegram channel. You can add it now and grant
+              @BotflowadsBot admin access afterwards — the next screen walks you through that.
             </p>
           </div>
           <Input
@@ -168,14 +168,10 @@ export function AddChannelPage() {
         <Card className="space-y-2">
           <h3 className="text-sm font-semibold">How it works</h3>
           <ol className="text-sm text-mute space-y-1.5 list-decimal list-inside">
-            <li>
-              Add @BotflowadsBot to your channel as an administrator, with "Post Messages" switched on.
-            </li>
+            <li>Add your channel — no admin rights needed yet.</li>
             <li>Pick the days and times you will accept a sponsored post — up to 21 a week.</li>
-            <li>
-              Press Verify Channel. Your channel goes live straight away; there is no approval queue.
-            </li>
-            <li>Sponsorship requests then arrive in your inbox.</li>
+            <li>Grant @BotflowadsBot admin access with "Post Messages" on, one tap on the next screen.</li>
+            <li>Your channel goes live automatically the moment the bot has those rights — no approval queue.</li>
           </ol>
         </Card>
 
@@ -210,9 +206,8 @@ export function AddChannelPage() {
         </Card>
 
         <p className="text-xs text-mute leading-relaxed px-1">
-          Before verifying, add <b>@BotflowadsBot</b> as a channel administrator with the{' '}
-          <b>&quot;Post Messages&quot;</b> permission. Your channel is added the moment the bot has those
-          rights.
+          You can submit without the bot having access yet — grant it on the next screen. Your channel
+          goes live automatically the moment the bot has those rights.
         </p>
 
         <Button
@@ -223,7 +218,7 @@ export function AddChannelPage() {
           onClick={submit}
           icon={<Icon name="check" size={18} />}
         >
-          Verify Channel
+          Add channel
         </Button>
       </div>
     </>

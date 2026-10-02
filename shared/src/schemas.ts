@@ -210,7 +210,19 @@ export const adminWithdrawalActionSchema = z.object({
 
 export const updateSettingSchema = z.object({
   key: z.string().min(1),
-  value: z.union([z.string(), z.number(), z.boolean(), z.record(z.string(), z.unknown())]),
+  // A setting value is a primitive, a flat object, or a list of primitives.
+  // The array member is deliberately the LAST branch with the other members
+  // untouched, so an existing string/number/boolean/object value parses exactly
+  // as before. Per-key item TYPES (e.g. numbers for `budget_alert_thresholds`)
+  // are enforced by the backend route, which is the only layer that knows the
+  // keys — see backend/src/routes/admin/settings.routes.ts.
+  value: z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.record(z.string(), z.unknown()),
+    z.array(z.union([z.string(), z.number(), z.boolean()])),
+  ]),
 });
 
 /* ---------- Support / reports ---------- */

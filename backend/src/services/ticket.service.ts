@@ -37,6 +37,18 @@ const MESSAGE_SELECT = {
   createdAt: true,
 } satisfies Prisma.TicketMessageSelect;
 
+/**
+ * The admin thread selects the same message fields as `MESSAGE_SELECT` plus the
+ * two the admin contract declares (`senderId`, `attachmentUrl`). The extra fields
+ * are additive and only used by the admin read below — `MESSAGE_SELECT` and the
+ * owner-facing `getTicket` are untouched.
+ */
+const ADMIN_MESSAGE_SELECT = {
+  ...MESSAGE_SELECT,
+  senderId: true,
+  attachmentUrl: true,
+} satisfies Prisma.TicketMessageSelect;
+
 const CLOSED_LIKE: TicketStatus[] = ['CLOSED', 'RESOLVED'];
 
 function isUniqueViolation(err: unknown): boolean {
@@ -251,6 +263,33 @@ export async function listTicketsAdmin(filter: ListTicketsAdminFilter, p: Pagina
 
   const rows = items.map((t) => ({ ...t, userName: displayName(t.user) }));
   return buildPaginated(rows, total, p);
+}
+
+/**
+ * Admin-scoped thread read: the same query as `getTicket`, minus the ownership
+ * assertion. `getTicket` calls `assertTicketOwner`, so an admin reading another
+ * user's ticket would get a 404; here the authorisation is the route's
+ * `tickets.view` permission instead of ownership. Messages are returned oldest
+ * first, exactly as `getTicket` orders them.
+ *
+ * `getTicket`, `assertTicketOwner` and the owner path are untouched.
+ */
+export async function getTicketAdmin(ticketId: string) {
+  const [ticket, messages] = await Promise.all([
+    prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      select: TICKET_SELECT,
+    }),
+    prisma.ticketMessage.findMany({
+      where: { ticketId },
+      orderBy: { createdAt: 'asc' },
+      select: ADMIN_MESSAGE_SELECT,
+    }),
+  ]);
+
+  if (!ticket) throw new NotFoundError('Ticket');
+
+  return { ticket, messages };
 }
 
 /**

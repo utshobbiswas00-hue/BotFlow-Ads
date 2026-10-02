@@ -190,8 +190,51 @@ export interface AdminWithdrawalItem {
   createdAt: Date;
 }
 
+/**
+ * Whitelisted sort keys for the admin withdrawals list (§79). The route
+ * validates the `sort` query param with `z.enum(WITHDRAWAL_SORT_KEYS)` and
+ * `withdrawalOrderBy` maps a key to an explicit Prisma `orderBy`, so a client
+ * string never reaches the query builder.
+ */
+export const WITHDRAWAL_SORT_KEYS = [
+  'created_at',
+  'created_at_desc',
+  'amount',
+  'amount_desc',
+] as const;
+
+export type WithdrawalSortKey = (typeof WITHDRAWAL_SORT_KEYS)[number];
+
+/**
+ * Map a validated sort key to an explicit Prisma `orderBy`. Exhaustive over the
+ * union: a value outside `WITHDRAWAL_SORT_KEYS` is a compile-time error.
+ */
+export function withdrawalOrderBy(sort: WithdrawalSortKey): Prisma.WithdrawalOrderByWithRelationInput {
+  switch (sort) {
+    case 'created_at':
+      return { createdAt: 'asc' };
+    case 'created_at_desc':
+      return { createdAt: 'desc' };
+    case 'amount':
+      return { amountCents: 'asc' };
+    case 'amount_desc':
+      return { amountCents: 'desc' };
+  }
+}
+
+/** Optional §79 filters; all absent by default so existing callers are unchanged. */
+export interface AdminListWithdrawalsFilter {
+  status?: WithdrawalStatus;
+  /** Inclusive start of the window (the `createdAt` column). */
+  from?: Date;
+  /** Exclusive end of the window. */
+  to?: Date;
+  /** Whitelisted sort key; omitted keeps the default ordering. */
+  sort?: WithdrawalSortKey;
+}
+
 export async function listWithdrawalsAdmin(
-  filter: { status?: WithdrawalStatus },
+  filter: AdminListWithdrawalsFilter,
   p: Pagination,
 ): Promise<{
   items: AdminWithdrawalItem[];
@@ -202,13 +245,26 @@ export async function listWithdrawalsAdmin(
 }> {
   const where: Prisma.WithdrawalWhereInput = {
     ...(filter.status ? { status: filter.status } : {}),
+    // Date filter maps to Withdrawal.createdAt — the column this list orders by.
+    // NOTE: the schema only has @@index([userId, createdAt]) and @@index([status]),
+    // so the admin-wide range scan wants @@index([createdAt]) to stay fast. The
+    // amount sort likewise has no index.
+    ...(filter.from || filter.to
+      ? {
+          createdAt: {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lt: filter.to } : {}),
+          },
+        }
+      : {}),
   };
 
   const [total, rows] = await Promise.all([
     prisma.withdrawal.count({ where }),
     prisma.withdrawal.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // Default preserved: newest withdrawals first when no `sort` is given.
+      orderBy: filter.sort ? withdrawalOrderBy(filter.sort) : { createdAt: 'desc' },
       skip: p.skip,
       take: p.take,
       select: {

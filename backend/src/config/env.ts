@@ -67,6 +67,45 @@ const envSchema = z.object({
   JWT_SECRET: z.string().default('dev_jwt_secret_change_me'),
   ENCRYPTION_KEY: z.string().default('0'.repeat(64)),
 
+  /**
+   * Staff panel login (username + password).
+   *
+   * All three of USERNAME, PASSWORD_HASH and ADMIN_TELEGRAM_ID must be set for
+   * the password door to open. Leave them blank to keep the panel
+   * Telegram-only — that is the default, so an unconfigured deployment has no
+   * password surface at all.
+   *
+   * The password is stored ONLY as a scrypt hash. Generate it with:
+   *   node backend/scripts/hash-admin-password.mjs
+   * A plaintext password must never be written here: this file documents the
+   * shape of the config, and `.env` is not the only place an env var ends up
+   * (CI logs, container inspect, crash dumps, a Render dashboard screenshot).
+   */
+  ADMIN_PANEL_USERNAME: z.string().default(''),
+  ADMIN_PANEL_PASSWORD_HASH: z.string().default(''),
+  /** The Telegram id whose User row the panel actions are attributed to. */
+  ADMIN_PANEL_ADMIN_TELEGRAM_ID: z.string().default(''),
+
+  /**
+   * Server-side session settings.
+   *
+   * Default 12 hours, with the TTL refreshed on every authenticated request, so
+   * an operator working continuously is not signed out mid-shift while an
+   * abandoned browser stops being a valid credential within half a day.
+   */
+  ADMIN_PANEL_SESSION_TTL_HOURS: int(12),
+  ADMIN_PANEL_SESSION_COOKIE: z.string().default('bf_admin_sid'),
+  ADMIN_PANEL_CSRF_COOKIE: z.string().default('bf_admin_csrf'),
+  /**
+   * `Secure` on the cookies. Forced on in production by the hardening check
+   * below; overridable in dev because a local http:// origin would otherwise
+   * drop the cookie entirely and the login would look broken.
+   */
+  ADMIN_PANEL_COOKIE_SECURE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
   // Payments
   PAYMENT_WEBHOOK_SECRET: z.string().default(''),
 
@@ -165,6 +204,27 @@ function loadEnv(): Env {
     if (e.TELEGRAM_BOT_TOKEN && !e.TELEGRAM_WEBHOOK_SECRET)
       fatal.push(
         'TELEGRAM_WEBHOOK_SECRET is empty while TELEGRAM_BOT_TOKEN is set — the bot webhook would accept unauthenticated requests from anyone who finds its URL.',
+      );
+
+    // A half-configured panel login is worse than none: it looks enabled in the
+    // dashboard but either nobody can pass it or, if the hash is malformed, the
+    // failure mode is a locked-out operator rather than a hole. Say so at boot.
+    const panelParts = [e.ADMIN_PANEL_USERNAME, e.ADMIN_PANEL_PASSWORD_HASH, e.ADMIN_PANEL_ADMIN_TELEGRAM_ID];
+    const panelSet = panelParts.filter(Boolean).length;
+    if (panelSet > 0 && panelSet < 3)
+      fatal.push(
+        'ADMIN_PANEL_USERNAME / ADMIN_PANEL_PASSWORD_HASH / ADMIN_PANEL_ADMIN_TELEGRAM_ID are partially set — the ' +
+          'panel login needs all three, or none. Set the missing ones or clear them all to keep the panel Telegram-only.',
+      );
+    if (e.ADMIN_PANEL_PASSWORD_HASH && !e.ADMIN_PANEL_PASSWORD_HASH.startsWith('scrypt$'))
+      fatal.push(
+        'ADMIN_PANEL_PASSWORD_HASH is not a scrypt hash — it looks like a plaintext password. Generate one with ' +
+          '`node backend/scripts/hash-admin-password.mjs` and store only the hash.',
+      );
+    if (panelSet === 3 && !e.ADMIN_PANEL_COOKIE_SECURE)
+      fatal.push(
+        'ADMIN_PANEL_COOKIE_SECURE=false in production — the session cookie would travel over plain HTTP and could ' +
+          'be read by anyone on the network. Remove the override (it defaults to true) or terminate TLS.',
       );
 
     if (fatal.length) {

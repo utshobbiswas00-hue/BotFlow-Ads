@@ -240,25 +240,63 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Send a DM to a user. Never throws — notification failures must not break flows. */
-export async function sendUserMessage(
+/** Outcome of one user-message attempt, including the message id and reason. */
+export interface UserMessageSendResult {
+  ok: boolean;
+  messageId: bigint | null;
+  /** Telegram's own description (or our message) when `ok` is false. */
+  error: string | null;
+  /**
+   * True when Telegram refused permanently — the chat can never receive this
+   * message (blocked, kicked, deactivated, gone). Retrying is pointless.
+   */
+  permanent: boolean;
+}
+
+/**
+ * Classify a Telegram failure as permanent (unreachable recipient) or transient.
+ *
+ * 403 means the bot is blocked/kicked, and a 400 "chat not found" / "user is
+ * deactivated" means the account is gone. Those never succeed on retry, so they
+ * are reported as SKIPPED rather than FAILED — the difference matters in the
+ * delivery report (a blocked user is not a platform failure).
+ */
+export function isPermanentDeliveryFailure(err: unknown): boolean {
+  if (!(err instanceof GrammyError)) return false;
+  if (err.error_code === 403) return true;
+  const desc = err.description.toLowerCase();
+  if (
+    err.error_code === 400 &&
+    (desc.includes('chat not found') ||
+      desc.includes('user is deactivated') ||
+      desc.includes('bot was blocked') ||
+      desc.includes('user not found'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Send a DM and report WHAT happened — the message id on success, Telegram's
+ * description on failure, and whether the failure is permanent.
+ *
+ * Same flood-wait handling as `sendUserMessage` (which now delegates here), but
+ * with the detail the broadcast delivery report needs. Never throws.
+ */
+export async function sendUserMessageDetailed(
   telegramId: string | number | bigint,
   text: string,
   replyMarkup?: InlineKeyboardMarkup,
-): Promise<boolean> {
-  // A 429 means "retry after N seconds", not "delivery failed". Previously the
-  // flood-wait was swallowed and reported as `false`, so every notification
-  // caught in a burst was dropped for good. Honour `retry_after` (bounded) and
-  // retry before reporting failure — the boolean contract is unchanged, so
-  // existing callers keep working.
+): Promise<UserMessageSendResult> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await tgApi.sendMessage(telegramId as never, truncateForTelegram(text), {
+      const msg = await tgApi.sendMessage(telegramId as never, truncateForTelegram(text), {
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       });
-      return true;
+      return { ok: true, messageId: BigInt(msg.message_id), error: null, permanent: false };
     } catch (err) {
       const waitMs = floodWaitMs(err);
       if (waitMs !== null && attempt < MAX_FLOOD_WAITS) {
@@ -273,9 +311,29 @@ export async function sendUserMessage(
         { telegramId: String(telegramId), err: messageOf(err) },
         'sendUserMessage failed (user may have blocked the bot)',
       );
-      return false;
+      return {
+        ok: false,
+        messageId: null,
+        error: messageOf(err),
+        permanent: isPermanentDeliveryFailure(err),
+      };
     }
   }
+}
+
+/** Send a DM to a user. Never throws — notification failures must not break flows. */
+export async function sendUserMessage(
+  telegramId: string | number | bigint,
+  text: string,
+  replyMarkup?: InlineKeyboardMarkup,
+): Promise<boolean> {
+  // A 429 means "retry after N seconds", not "delivery failed". Previously the
+  // flood-wait was swallowed and reported as `false`, so every notification
+  // caught in a burst was dropped for good. Honour `retry_after` (bounded) and
+  // retry before reporting failure — the boolean contract is unchanged, so
+  // existing callers keep working.
+  const result = await sendUserMessageDetailed(telegramId, text, replyMarkup);
+  return result.ok;
 }
 
 export async function answerCallbackQuery(id: string, text?: string, alert = false): Promise<void> {

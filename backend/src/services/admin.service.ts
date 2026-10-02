@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
-import type { CampaignStatus, ChannelStatus, DeliveryJobStatus } from '@prisma/client';
+import type { CampaignStatus, ChannelStatus, DeliveryJobStatus, UserStatus } from '@prisma/client';
 import type { UserProfile } from '@botflow/shared';
 import { prisma, transaction } from '../db/prisma';
 import { randomToken } from '../utils/crypto';
 import {
+  AppError,
   InsufficientBalanceError,
   NotFoundError,
   ValidationError,
@@ -196,9 +197,112 @@ async function findUserIdsByTelegramIdSearch(term: string): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-export async function listUsersAdmin(search: string | undefined, p: Pagination) {
+/* ------------------------------------------------------------------
+ *  Users — list (§79 date range + sort)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Whitelisted sort keys for the admin users list (§79). The route validates the
+ * `sort` query param with `z.enum(USER_SORT_KEYS)` and `userOrderBy` maps a key
+ * to an explicit Prisma `orderBy`, so a client string never reaches the query
+ * builder.
+ */
+export const USER_SORT_KEYS = [
+  'created_at',
+  'created_at_desc',
+  'updated_at',
+  'updated_at_desc',
+] as const;
+
+export type UserSortKey = (typeof USER_SORT_KEYS)[number];
+
+/**
+ * Map a validated sort key to an explicit Prisma `orderBy`. Exhaustive over the
+ * union, so adding a key without a case (or passing an unlisted value) is a
+ * compile-time error rather than an injection.
+ */
+export function userOrderBy(sort: UserSortKey): Prisma.UserOrderByWithRelationInput {
+  switch (sort) {
+    case 'created_at':
+      return { createdAt: 'asc' };
+    case 'created_at_desc':
+      return { createdAt: 'desc' };
+    case 'updated_at':
+      return { updatedAt: 'asc' };
+    case 'updated_at_desc':
+      return { updatedAt: 'desc' };
+  }
+}
+
+/** Optional §79 filters; all absent by default so existing callers are unchanged. */
+export interface AdminListUsersFilter {
+  /** Inclusive start of the window (the `createdAt` column). */
+  from?: Date;
+  /** Exclusive end of the window. */
+  to?: Date;
+  /** Whitelisted sort key; omitted keeps the default ordering. */
+  sort?: UserSortKey;
+  /** Account status filter — a real `UserStatus` enum member (§11). */
+  status?: UserStatus;
+  /** True = has at least one Channel (derived, not the cached column). */
+  isPublisher?: boolean;
+  /** True = has at least one Campaign (derived, not the cached column). */
+  isAdvertiser?: boolean;
+}
+
+/**
+ * Build the ROLE portion of the admin users where-clause from the two boolean
+ * filters.
+ *
+ * IMPORTANT — why the relation is queried instead of the cached column:
+ * `User` carries cached `isPublisher` / `isAdvertiser` booleans, but they are
+ * DERIVED state. Nothing guarantees they were updated the last time a user's
+ * channel or campaign row changed (imports, backfills, a deleted channel), so
+ * they can drift from the relationships that actually exist. A drifted flag is
+ * exactly what makes an admin list lie — an operator filtering "publishers"
+ * would be shown users with no channel and miss users who have one. The truth
+ * is the relationship itself, so `isPublisher` means "has >= 1 Channel" and
+ * `isAdvertiser` means "has >= 1 Campaign".
+ *
+ * Pure and dependency-free so it can be unit-tested without a database.
+ */
+export function userRoleWhere(filter: {
+  isPublisher?: boolean;
+  isAdvertiser?: boolean;
+}): Prisma.UserWhereInput {
+  return {
+    ...(filter.isPublisher !== undefined
+      ? { channels: filter.isPublisher ? { some: {} } : { none: {} } }
+      : {}),
+    ...(filter.isAdvertiser !== undefined
+      ? { campaigns: filter.isAdvertiser ? { some: {} } : { none: {} } }
+      : {}),
+  };
+}
+
+export async function listUsersAdmin(
+  search: string | undefined,
+  p: Pagination,
+  filter: AdminListUsersFilter = {},
+) {
   const term = search?.trim();
-  const where: Prisma.UserWhereInput = {};
+  // Compose EVERY optional filter into one where-clause. `status` and the two
+  // role filters are ANDed with the date window and the search OR below — none
+  // of them replaces another, so they all combine.
+  const where: Prisma.UserWhereInput = {
+    ...(filter.status ? { status: filter.status } : {}),
+    ...userRoleWhere(filter),
+  };
+
+  // Date filter maps to User.createdAt — the column this list already orders by
+  // and already indexes (@@index([createdAt])), so "registrations since X" stays
+  // fast. (The updated_at sort has no index.)
+  if (filter.from || filter.to) {
+    where.createdAt = {
+      ...(filter.from ? { gte: filter.from } : {}),
+      ...(filter.to ? { lt: filter.to } : {}),
+    };
+  }
 
   if (term) {
     const telegramMatches = await findUserIdsByTelegramIdSearch(term);
@@ -214,7 +318,8 @@ export async function listUsersAdmin(search: string | undefined, p: Pagination) 
     prisma.user.count({ where }),
     prisma.user.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // Default preserved: newest registrations first when no `sort` is given.
+      orderBy: filter.sort ? userOrderBy(filter.sort) : { createdAt: 'desc' },
       skip: p.skip,
       take: p.take,
       select: ADMIN_USER_SELECT,
@@ -340,20 +445,64 @@ export async function getUserAdminDetail(userId: string) {
  *  Listings (admin view — no ownership scoping)
  * ------------------------------------------------------------------ */
 
+/**
+ * Whitelisted sort keys for the admin campaigns list (§79); see `userOrderBy`
+ * for why the mapping is a switch over a typed union rather than a raw string.
+ */
+export const CAMPAIGN_SORT_KEYS = [
+  'created_at',
+  'created_at_desc',
+  'updated_at',
+  'updated_at_desc',
+] as const;
+
+export type CampaignSortKey = (typeof CAMPAIGN_SORT_KEYS)[number];
+
+export function campaignOrderBy(sort: CampaignSortKey): Prisma.CampaignOrderByWithRelationInput {
+  switch (sort) {
+    case 'created_at':
+      return { createdAt: 'asc' };
+    case 'created_at_desc':
+      return { createdAt: 'desc' };
+    case 'updated_at':
+      return { updatedAt: 'asc' };
+    case 'updated_at_desc':
+      return { updatedAt: 'desc' };
+  }
+}
+
 export interface AdminListCampaignsFilter {
   status?: CampaignStatus;
+  /** Inclusive start of the window (the `createdAt` column). */
+  from?: Date;
+  /** Exclusive end of the window. */
+  to?: Date;
+  /** Whitelisted sort key; omitted keeps the default ordering. */
+  sort?: CampaignSortKey;
 }
 
 export async function listCampaignsAdmin(filter: AdminListCampaignsFilter, p: Pagination) {
   const where: Prisma.CampaignWhereInput = {
     ...(filter.status ? { status: filter.status } : {}),
+    // Date filter maps to Campaign.createdAt — the column this list orders by.
+    // NOTE: the schema has no plain createdAt index today (only advertiserId+
+    // status, status, startAt); a date-ranged admin list wants @@index([createdAt]).
+    ...(filter.from || filter.to
+      ? {
+          createdAt: {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lt: filter.to } : {}),
+          },
+        }
+      : {}),
   };
 
   const [total, rows] = await Promise.all([
     prisma.campaign.count({ where }),
     prisma.campaign.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // Default preserved: newest campaigns first when no `sort` is given.
+      orderBy: filter.sort ? campaignOrderBy(filter.sort) : { createdAt: 'desc' },
       skip: p.skip,
       take: p.take,
       select: {
@@ -373,20 +522,65 @@ export async function listCampaignsAdmin(filter: AdminListCampaignsFilter, p: Pa
   return buildPaginated(items, total, p);
 }
 
+/**
+ * Whitelisted sort keys for the admin channels list (§79); see `userOrderBy`
+ * for why the mapping is a switch over a typed union rather than a raw string.
+ */
+export const CHANNEL_SORT_KEYS = [
+  'created_at',
+  'created_at_desc',
+  'updated_at',
+  'updated_at_desc',
+] as const;
+
+export type ChannelSortKey = (typeof CHANNEL_SORT_KEYS)[number];
+
+export function channelOrderBy(sort: ChannelSortKey): Prisma.ChannelOrderByWithRelationInput {
+  switch (sort) {
+    case 'created_at':
+      return { createdAt: 'asc' };
+    case 'created_at_desc':
+      return { createdAt: 'desc' };
+    case 'updated_at':
+      return { updatedAt: 'asc' };
+    case 'updated_at_desc':
+      return { updatedAt: 'desc' };
+  }
+}
+
 export interface AdminListChannelsFilter {
   status?: ChannelStatus;
+  /** Inclusive start of the window (the `createdAt` column). */
+  from?: Date;
+  /** Exclusive end of the window. */
+  to?: Date;
+  /** Whitelisted sort key; omitted keeps the default ordering. */
+  sort?: ChannelSortKey;
 }
 
 export async function listChannelsAdmin(filter: AdminListChannelsFilter, p: Pagination) {
   const where: Prisma.ChannelWhereInput = {
     ...(filter.status ? { status: filter.status } : {}),
+    // Date filter maps to Channel.createdAt — the column this list orders by.
+    // NOTE: no createdAt index exists today (only status/category/country+
+    // language/subscriberCount/ownerId); add @@index([createdAt]) before the
+    // admin table gets large.
+    ...(filter.from || filter.to
+      ? {
+          createdAt: {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lt: filter.to } : {}),
+          },
+        }
+      : {}),
   };
 
   const [total, rows] = await Promise.all([
     prisma.channel.count({ where }),
     prisma.channel.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // Default preserved: newest channels first when no `sort` is given.
+      orderBy: filter.sort ? channelOrderBy(filter.sort) : { createdAt: 'desc' },
       skip: p.skip,
       take: p.take,
       select: {
@@ -405,20 +599,66 @@ export async function listChannelsAdmin(filter: AdminListChannelsFilter, p: Pagi
   return buildPaginated(items, total, p);
 }
 
+/**
+ * Whitelisted sort keys for the admin delivery list (§79); see `userOrderBy`
+ * for why the mapping is a switch over a typed union rather than a raw string.
+ */
+export const DELIVERY_SORT_KEYS = [
+  'scheduled_at',
+  'scheduled_at_desc',
+  'created_at',
+  'created_at_desc',
+] as const;
+
+export type DeliverySortKey = (typeof DELIVERY_SORT_KEYS)[number];
+
+export function deliveryJobOrderBy(sort: DeliverySortKey): Prisma.DeliveryJobOrderByWithRelationInput[] {
+  switch (sort) {
+    case 'scheduled_at':
+      return [{ scheduledAt: 'asc' }, { createdAt: 'desc' }];
+    case 'scheduled_at_desc':
+      return [{ scheduledAt: 'desc' }, { createdAt: 'desc' }];
+    case 'created_at':
+      return [{ createdAt: 'asc' }];
+    case 'created_at_desc':
+      return [{ createdAt: 'desc' }];
+  }
+}
+
 export interface AdminListDeliveryJobsFilter {
   status?: DeliveryJobStatus;
+  /** Inclusive start of the window (the `scheduledAt` column). */
+  from?: Date;
+  /** Exclusive end of the window. */
+  to?: Date;
+  /** Whitelisted sort key; omitted keeps the default ordering. */
+  sort?: DeliverySortKey;
 }
 
 export async function listDeliveryJobs(filter: AdminListDeliveryJobsFilter, p: Pagination) {
   const where: Prisma.DeliveryJobWhereInput = {
     ...(filter.status ? { status: filter.status } : {}),
+    // Date filter maps to DeliveryJob.scheduledAt — this list is ordered by the
+    // scheduled time (not createdAt), and scheduledAt is the timestamp the queue
+    // screen is built around. NOTE: only @@index([status, scheduledAt]) exists;
+    // a scheduledAt range/sort without a status filter is not fully covered, so a
+    // plain @@index([scheduledAt]) would keep it fast at scale.
+    ...(filter.from || filter.to
+      ? {
+          scheduledAt: {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lt: filter.to } : {}),
+          },
+        }
+      : {}),
   };
 
   const [total, rows] = await Promise.all([
     prisma.deliveryJob.count({ where }),
     prisma.deliveryJob.findMany({
       where,
-      orderBy: [{ scheduledAt: 'desc' }, { createdAt: 'desc' }],
+      // Default preserved: most recently scheduled first when no `sort` is given.
+      orderBy: filter.sort ? deliveryJobOrderBy(filter.sort) : [{ scheduledAt: 'desc' }, { createdAt: 'desc' }],
       skip: p.skip,
       take: p.take,
       select: {
@@ -791,5 +1031,182 @@ export async function adjustUserBalance(
     reference,
     previousBalanceCents,
     newBalanceCents,
+  };
+}
+
+/* ------------------------------------------------------------------
+ *  Admin-initiated refund (§38)
+ * ------------------------------------------------------------------ */
+
+export interface AdminRefundInput {
+  campaignId: string;
+  amountCents: number;
+  reason: string;
+}
+
+/** Mirrors `RefundResult` in the frozen frontend contract 1:1. */
+export interface AdminRefundResult {
+  transactionId: string;
+  reference: string;
+  amountCents: number;
+  campaignId: string;
+  /** The advertiser's AVAILABLE balance after the credit. */
+  newBalanceCents: number;
+}
+
+export interface RefundableInput {
+  budgetTotalCents: number;
+  budgetSpentCents: number;
+  budgetReservedCents: number;
+  /** Sum of REFUND ledger rows already written for this campaign. */
+  alreadyRefundedCents: number;
+}
+
+/**
+ * How much of a campaign may still be refunded, as a PURE function so the rule
+ * is testable without a database.
+ *
+ * Three independent limits, all of which must hold:
+ *  1. unspent = budgetTotal - budgetSpent — money that was never delivered;
+ *     a delivered post cannot be clawed back out of the advertiser's budget.
+ *  2. headroom = unspent - alreadyRefunded — whatever was already handed back
+ *     through a prior REFUND (a cancel, a close with unused budget, or a prior
+ *     admin refund) is gone; refunding it again would credit the same money
+ *     twice. The prior figure is read from the ledger, not from a counter.
+ *  3. reserved = budgetReservedCents — a refund returns money that is still
+ *     held in escrow. Budget already released to the advertiser is not
+ *     refundable a second time, and we must never drive the reservation
+ *     negative.
+ *
+ * The result is never negative: a campaign that has already been fully returned
+ * reports 0, not a negative allowance.
+ */
+export function computeRefundableCents(input: RefundableInput): number {
+  const unspent = Math.max(0, input.budgetTotalCents - input.budgetSpentCents);
+  const headroom = Math.max(0, unspent - Math.max(0, input.alreadyRefundedCents));
+  return Math.max(0, Math.min(input.budgetReservedCents, headroom));
+}
+
+/**
+ * Issue an admin refund against a campaign, crediting the ADVERTISER that owns
+ * it. §38.
+ *
+ * Money moves the same way every other movement does: one `REFUND` ledger row
+ * inside a single DB transaction, drawn from the campaign's held escrow
+ * (`reserved` -> `available`), with the campaign counter moved atomically. The
+ * wallet is never written directly — the ledger stays the source of truth.
+ *
+ * Idempotency / collision-safety comes from the ledger reference, which carries
+ * a per-campaign sequence drawn from the refunds already recorded for that
+ * campaign (`refund:admin:<campaignId>:<n>`). A second refund therefore cannot
+ * reuse the first's reference and replay it.
+ *
+ * Concurrency: the campaign row is locked (`SELECT … FOR UPDATE`) for the whole
+ * transaction, so two concurrent refunds serialize: the second re-reads the
+ * committed campaign and the prior REFUND rows, sees a larger sequence and a
+ * smaller remaining budget, and is refused if it over-asks.
+ */
+export async function issueAdminRefund(
+  adminId: string,
+  input: AdminRefundInput,
+): Promise<AdminRefundResult> {
+  const { campaignId, amountCents, reason } = input;
+
+  if (!Number.isInteger(amountCents) || amountCents <= 0) {
+    throw new ValidationError('Refund amount must be a positive whole number of cents');
+  }
+  const trimmedReason = reason?.trim() ?? '';
+  if (trimmedReason.length < 10) {
+    throw new ValidationError('A refund reason of at least 10 characters is required');
+  }
+
+  const { posted, reference, advertiserId } = await transaction(async (tx) => {
+    // Serialize concurrent refunds for this campaign.
+    await tx.$queryRaw`SELECT id FROM "campaigns" WHERE id = ${campaignId} FOR UPDATE`;
+
+    const campaign = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: {
+        id: true,
+        advertiserId: true,
+        budgetTotalCents: true,
+        budgetSpentCents: true,
+        budgetReservedCents: true,
+      },
+    });
+    if (!campaign) throw new NotFoundError('Campaign');
+
+    // Prior refunds for THIS campaign, straight from the ledger.
+    const priorRefunds = await tx.transaction.aggregate({
+      where: { campaignId, type: 'REFUND', status: 'COMPLETED' },
+      _sum: { amountCents: true },
+      _count: true,
+    });
+    const alreadyRefundedCents = Math.abs(priorRefunds._sum.amountCents ?? 0);
+
+    const maxRefundableCents = computeRefundableCents({
+      budgetTotalCents: campaign.budgetTotalCents,
+      budgetSpentCents: campaign.budgetSpentCents,
+      budgetReservedCents: campaign.budgetReservedCents,
+      alreadyRefundedCents,
+    });
+
+    // Refuse rather than clamp: silently shrinking the amount would hide that
+    // the operator asked for something impossible.
+    if (amountCents > maxRefundableCents) {
+      throw new AppError(
+        `Refund of ${amountCents} cents exceeds the campaign's refundable budget. ` +
+          `The maximum allowed is ${maxRefundableCents} cents.`,
+        400,
+      );
+    }
+
+    // Per-campaign sequence keeps the reference unique per refund.
+    const reference = `refund:admin:${campaignId}:${priorRefunds._count + 1}`;
+
+    const posted = await postLedger(tx, {
+      userId: campaign.advertiserId,
+      type: 'REFUND',
+      amountCents,
+      reference,
+      referenceType: 'ADMIN_REFUND',
+      // The credit comes out of the campaign's held escrow — never out of thin
+      // air — so the reservation and the wallet cannot diverge.
+      walletDelta: { reserved: -amountCents, available: amountCents, totalRefunded: amountCents },
+      description: `Admin refund: ${trimmedReason}`,
+      campaignId,
+      metadata: { adminId, reason: trimmedReason },
+    });
+
+    await tx.campaign.update({
+      where: { id: campaignId },
+      data: { budgetReservedCents: { decrement: amountCents } },
+    });
+
+    return { posted, reference, advertiserId: campaign.advertiserId };
+  });
+
+  // The reason lives durably here — the audit row is its only permanent home.
+  await recordAudit({
+    actorId: adminId,
+    action: 'REFUND_ISSUED',
+    targetType: 'CAMPAIGN',
+    targetId: campaignId,
+    newValue: { amountCents, reference, reason: trimmedReason },
+  });
+
+  // Re-read AFTER the transaction. Arithmetic on a balance read before commit
+  // is a stale read under concurrency.
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: advertiserId },
+    select: { availableCents: true },
+  });
+
+  return {
+    transactionId: posted.transaction.id,
+    reference,
+    amountCents,
+    campaignId,
+    newBalanceCents: wallet?.availableCents ?? 0,
   };
 }

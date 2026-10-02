@@ -19,6 +19,13 @@ export interface NotifyJob {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /**
+   * Broadcast delivery tracking (spec §52). OPTIONAL and additive: ordinary
+   * producers never set these, so the payload they enqueue is unchanged and the
+   * worker's tracking branch (keyed on their presence) is never entered.
+   */
+  broadcastJobId?: string;
+  broadcastRecipientId?: string;
 }
 
 /* ------------------------------------------------------------------
@@ -110,6 +117,42 @@ export async function enqueueNotification(payload: NotifyJob, delayMs = 0): Prom
   } catch (err) {
     logger.warn({ err, userId: payload.userId, type: payload.type }, 'failed to enqueue notification');
   }
+}
+
+/**
+ * One admin broadcast to many USERS (spec §52).
+ *
+ * Rides the existing NOTIFICATION queue — it is the same per-user delivery path
+ * the `send-telegram-notification` job uses, so no second queue is introduced.
+ * The payload carries the resolved recipient list so the audience is frozen at
+ * confirm time.
+ *
+ * Unlike `enqueueNotification` (best-effort, never throws), this RETURNS the job
+ * id and THROWS on failure: an operator who pressed "send" must never be told a
+ * broadcast was enqueued when the queue rejected it.
+ */
+export interface BroadcastJob {
+  title: string;
+  body: string;
+  audience: string;
+  userIds: string[];
+  /**
+   * The `BroadcastJob` row these recipients belong to, plus the
+   * `{ userId, recipientId }` mapping. Present for a tracked broadcast; the
+   * worker uses it to attribute each send's outcome back to its recipient row.
+   */
+  broadcastJobId?: string;
+  recipients?: { userId: string; recipientId: string }[];
+}
+
+export async function enqueueBroadcast(payload: BroadcastJob): Promise<string> {
+  const job = await notificationQueue.add(JOB.BROADCAST, payload, {
+    // A broadcast is an operator action, not a recurring event: a time-scoped id
+    // lets two deliberate sends of the same text both go out.
+    jobId: `broadcast:${Date.now()}`,
+    attempts: 2,
+  });
+  return job.id ?? `broadcast:${Date.now()}`;
 }
 
 /* ------------------------------------------------------------------

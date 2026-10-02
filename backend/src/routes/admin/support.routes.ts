@@ -3,7 +3,7 @@ import { TicketStatus } from '@prisma/client';
 import { paginationSchema } from '@botflow/shared';
 import { z } from 'zod';
 import { validate } from '../../middleware/validate';
-import { adminReplyTicket, listTicketsAdmin, setTicketStatus } from '../../services/ticket.service';
+import { adminReplyTicket, getTicketAdmin, listTicketsAdmin, setTicketStatus } from '../../services/ticket.service';
 import { requirePermission } from '../../middleware/adminAuth';
 import { adminId, idParams, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
@@ -32,6 +32,16 @@ supportRouter.get('/tickets', requirePermission('tickets.view'), validate({ quer
   try {
     const query = req.query as unknown as z.infer<typeof ticketsQuery>;
     const data = await listTicketsAdmin({ status: query.status }, getPagination(query));
+    respondOk(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Read any ticket's thread (any user); authorisation is `tickets.view`, not ownership. */
+supportRouter.get('/tickets/:id', requirePermission('tickets.view'), validate({ params: idParams }), async (req, res, next) => {
+  try {
+    const data = await getTicketAdmin(req.params.id);
     respondOk(res, data);
   } catch (err) {
     next(err);

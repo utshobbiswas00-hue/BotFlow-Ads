@@ -13,7 +13,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/unit/**/*.test.ts'],
+    // Co-located pure-logic unit tests live under src/**/__tests__; the older
+    // tests/unit/*.test.ts files stay included so nothing silently stops running.
+    include: ['tests/unit/**/*.test.ts', 'src/**/__tests__/**/*.test.ts'],
     fileParallelism: false,
     pool: 'forks',
     env: {

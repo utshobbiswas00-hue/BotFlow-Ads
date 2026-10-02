@@ -4,10 +4,10 @@ import type { Prisma } from '@prisma/client';
 import { paginationSchema } from '@botflow/shared';
 import { z } from 'zod';
 import { validate } from '../../middleware/validate';
-import { requireRole } from '../../middleware/adminAuth';
+import { ADMIN_PERMISSIONS, requireRole } from '../../middleware/adminAuth';
 import { prisma } from '../../db/prisma';
 import { recordAudit } from '../../services/audit.service';
-import { NotFoundError } from '../../utils/errors';
+import { AppError, NotFoundError } from '../../utils/errors';
 import { displayName } from '../../utils/format';
 import { buildPaginated, getPagination } from '../../utils/pagination';
 import { adminId, idParams, respondOk } from './common';
@@ -69,13 +69,31 @@ const createAdminUserSchema = z.object({
   role: z.nativeEnum(AdminRole),
 });
 
-const updateAdminUserSchema = z
+/**
+ * The permission keys in `permissions` that are NOT in the `ADMIN_PERMISSIONS`
+ * catalogue. Returns `[]` when every key is known.
+ *
+ * Exported (and kept pure) so it can be unit-tested without a database.
+ */
+export function findUnknownPermissions(permissions: readonly string[]): string[] {
+  const allowed = new Set<string>(ADMIN_PERMISSIONS);
+  return permissions.filter((key) => !allowed.has(key));
+}
+
+export const updateAdminUserSchema = z
   .object({
     role: z.nativeEnum(AdminRole).optional(),
     isActive: z.boolean().optional(),
+    /**
+     * Replaces the whole permission array. Keys are checked against
+     * ADMIN_PERMISSIONS in the handler rather than here: an unknown key must be
+     * a 400 that NAMES it, and a silent zod strip would be exactly the failure
+     * mode this field exists to fix.
+     */
+    permissions: z.array(z.string()).max(64).optional(),
   })
-  .refine((d) => d.role !== undefined || d.isActive !== undefined, {
-    message: 'Provide at least one of: role, isActive',
+  .refine((d) => d.role !== undefined || d.isActive !== undefined || d.permissions !== undefined, {
+    message: 'Provide at least one of: role, isActive, permissions',
   });
 
 /** All admin accounts, joined with the underlying user's profile. */
@@ -134,7 +152,7 @@ adminUsersRouter.post('/', validate({ body: createAdminUserSchema }), async (req
   }
 });
 
-/** Change an admin's role and/or active flag. */
+/** Change an admin's role, active flag and/or permission keys. */
 adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUserSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof updateAdminUserSchema>;
@@ -143,11 +161,42 @@ adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUse
     const existing = await prisma.adminUser.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new NotFoundError('Admin');
 
+    // The role that will be in force AFTER this update — a permission list has
+    // to be judged against the resulting role, not only the stored one (a single
+    // request may promote to SUPER_ADMIN and set permissions at the same time).
+    const effectiveRole = body.role ?? existing.role;
+
+    if (body.permissions !== undefined) {
+      // Reject unknown keys instead of dropping them: a dropped key either
+      // grants access nobody intended (the array is still written) or leaves an
+      // account unable to open the screen the caller thought they allowed.
+      const unknown = findUnknownPermissions(body.permissions);
+      if (unknown.length > 0) {
+        throw new AppError(
+          `Unknown permission key(s): ${unknown.join(', ')}`,
+          400,
+          undefined,
+          { unknownPermissions: unknown, allowed: ADMIN_PERMISSIONS },
+        );
+      }
+
+      // SUPER_ADMIN bypasses `requirePermission` entirely, so a stored list
+      // would only look like a restriction that is never actually applied.
+      if (effectiveRole === AdminRole.SUPER_ADMIN) {
+        throw new AppError(
+          'permissions cannot be set on a SUPER_ADMIN account: SUPER_ADMIN bypasses every permission check, so a stored list would not be enforced',
+          400,
+          undefined,
+        );
+      }
+    }
+
     const updated = await prisma.adminUser.update({
       where: { id: req.params.id },
       data: {
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+        ...(body.permissions !== undefined ? { permissions: body.permissions } : {}),
       },
       select: ADMIN_SELECT,
     });
@@ -158,8 +207,8 @@ adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUse
       action: 'ADMIN_USER_UPDATED',
       targetType: 'ADMIN_USER',
       targetId: updated.id,
-      oldValue: { role: existing.role, isActive: existing.isActive },
-      newValue: { role: updated.role, isActive: updated.isActive },
+      oldValue: { role: existing.role, isActive: existing.isActive, permissions: existing.permissions },
+      newValue: { role: updated.role, isActive: updated.isActive, permissions: updated.permissions },
     });
 
     respondOk(res, toAdminUserItem(updated));

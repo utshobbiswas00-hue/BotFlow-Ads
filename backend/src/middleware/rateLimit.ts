@@ -96,6 +96,17 @@ export const limiters = {
   /** Admin actions. */
   admin: rateLimit({ windowSeconds: 60, max: 200, prefix: 'rl:admin', scope: 'user' }),
 
+  /**
+   * Staff panel password login — deliberately hostile.
+   *
+   * The panel holds every financial control in the product behind one password,
+   * so this is the one endpoint where a slow-and-narrow limiter is worth the
+   * support cost. 10 attempts per IP per 15 minutes makes an online dictionary
+   * attack useless without locking out a legitimate operator who mistypes twice.
+   * Scoped by IP (the default), because there is no authenticated user yet.
+   */
+  adminLogin: rateLimit({ windowSeconds: 900, max: 10, prefix: 'rl:adminlogin' }),
+
   /** Webhook endpoints — generous, but bounded. */
   webhook: rateLimit({ windowSeconds: 60, max: 1000, prefix: 'rl:webhook' }),
 };

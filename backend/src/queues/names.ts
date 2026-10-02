@@ -46,6 +46,11 @@ export const JOB = {
   // notification
   SEND_TELEGRAM_NOTIFICATION: 'send-telegram-notification',
   BROADCAST_ADMIN_ALERT: 'broadcast-admin-alert',
+  /// One admin broadcast to USERS (spec §52). Carries the resolved recipient
+  /// list; the notification worker fans it out per user via
+  /// `createBulkNotifications` — the same queue and per-user path as any other
+  /// notification, so no second queue is introduced.
+  BROADCAST: 'send-broadcast',
   /// Email is a separate job from the Telegram push: one can be configured
   /// without the other, and a mail provider outage must not block a chat message.
   SEND_EMAIL_NOTIFICATION: 'send-email-notification',
@@ -70,3 +75,22 @@ export const JOB = {
 } as const;
 
 export type JobName = (typeof JOB)[keyof typeof JOB];
+
+/**
+ * The jobs carried by the NOTIFICATION queue, as one explicit list.
+ *
+ * Shared by the notification processor's regression test: it drives the
+ * processor with every member and asserts none falls through to the
+ * "unknown notification job" default. A job added here but never wired into the
+ * processor therefore fails the suite instead of silently disappearing. It is a
+ * separate list (not derived from `JOB`) because `JOB` is a flat catalogue
+ * across every queue, not one queue's contract.
+ */
+export const NOTIFICATION_JOBS = [
+  JOB.SEND_TELEGRAM_NOTIFICATION,
+  JOB.SEND_EMAIL_NOTIFICATION,
+  JOB.BROADCAST_ADMIN_ALERT,
+  JOB.BROADCAST,
+] as const;
+
+export type NotificationJobName = (typeof NOTIFICATION_JOBS)[number];

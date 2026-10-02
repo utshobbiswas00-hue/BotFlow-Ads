@@ -1,6 +1,7 @@
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import type { ApiResponse, ApiSuccess } from '@botflow/shared';
 import { getInitData, whenTelegramReady } from './telegram';
+import { getCsrfHeader, isAdminScopedUrl } from './adminSession';
 
 /**
  * Absolute origin of the API.
@@ -51,6 +52,17 @@ http.interceptors.request.use(async (config) => {
   if (initData) {
     config.headers.set('x-telegram-init-data', initData);
   }
+
+  // Staff panel session. The credential is an HttpOnly cookie the browser
+  // attaches on its own, so all this side has to do is (a) allow credentials and
+  // (b) echo the CSRF value, which the server checks on every unsafe method.
+  if (isAdminScopedUrl(config.url)) {
+    config.withCredentials = true;
+
+    const csrf = getCsrfHeader();
+    if (csrf) config.headers.set('x-csrf-token', csrf);
+  }
+
   return config;
 });
 

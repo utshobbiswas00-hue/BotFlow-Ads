@@ -88,10 +88,31 @@ export function SettingsPage() {
            <SettingsLink to="/billing" icon="doc" label="Billing & invoices" />
            <SettingsLink to="/referrals" icon="user" label="Referral program" />
           <SettingsLink to="/benefits" icon="coin" label="Benefits & earnings" />
-          <SettingsLink to="/premium" icon="shield" label="Premium" subtitle={premiumSubtitle} />
-          <SettingsLink to="/support" icon="doc" label="Support" />
-        </Card>
-      </div>
+           <SettingsLink to="/premium" icon="shield" label="Premium" subtitle={premiumSubtitle} />
+           <SettingsLink to="/support" icon="doc" label="Support" />
+         </Card>
+       </div>
+
+       {/*
+         Staff entry point. Rendered only for accounts the API reports as admin —
+         `/api/me` sets isAdmin/adminRole from the AdminUser row. The panel itself
+         re-checks everything server-side, so hiding this link is convenience, not
+         security: an admin can always navigate to /admin directly.
+       */}
+       {isAdmin ? (
+         <div>
+           <CardTitle>Staff</CardTitle>
+           <Card padded={false} className="divide-y divide-line">
+             <SettingsLink
+               to="/admin"
+               icon="shield"
+               label="Admin panel"
+               subtitle={adminRole ? humanize(adminRole) : undefined}
+             />
+           </Card>
+         </div>
+       ) : null}
+
 
       {/* Platform info */}
       <div>

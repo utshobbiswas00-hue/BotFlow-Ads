@@ -52,3 +52,12 @@ export { BroadcastPage as AdminBroadcastPage } from './pages/Broadcast';
 // delivery report.
 export { NotificationsPage as AdminNotificationsPage } from './pages/Notifications';
 export { BroadcastReportPage as AdminBroadcastReportPage } from './pages/BroadcastReport';
+// Round 6: the last of the spec gaps - activity stream, per-entity analytics,
+// error log, API logs, exports.
+export { ActivityPage as AdminActivityPage } from './pages/Activity';
+export { CampaignAnalyticsPage as AdminCampaignAnalyticsPage } from './pages/CampaignAnalytics';
+export { ChannelAnalyticsPage as AdminChannelAnalyticsPage } from './pages/ChannelAnalytics';
+export { ErrorsPage as AdminErrorsPage } from './pages/Errors';
+export { ApiLogsPage as AdminApiLogsPage } from './pages/ApiLogs';
+export { ExportPage as AdminExportPage } from './pages/Export';
+

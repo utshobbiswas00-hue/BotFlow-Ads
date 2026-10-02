@@ -507,6 +507,12 @@ export interface AdminChannelRow extends ChannelSummary {
 }
 
 export interface AdminUserRow extends UserProfile {
+  /**
+   * The recorded reason for a suspension or ban. Selected by the backend's
+   * ADMIN_USER_SELECT so the dossier can show WHY an account is suspended, not
+   * just that it is.
+   */
+  suspendedReason?: string | null;
   balanceCents: number;
 }
 

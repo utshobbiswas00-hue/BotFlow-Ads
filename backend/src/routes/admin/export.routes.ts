@@ -26,23 +26,38 @@ import { recordAudit } from '../../services/audit.service';
 import { listDepositsAdmin } from '../../services/deposit.service';
 import { listWithdrawalsAdmin } from '../../services/withdrawal.service';
 import { displayName } from '../../utils/format';
-import { streamCsv, type CsvColumn } from '../../utils/csv';
+import {
+  EXPORT_BATCH_SIZE,
+  EXPORT_MAX_ROWS,
+  streamCsv,
+  type CsvColumn,
+} from '../../utils/csv';
+import { buildXlsx, type XlsxCell } from '../../utils/xlsx';
 import { adminId } from './common';
 
 /**
- * Admin CSV exports (spec §78).
+ * Admin exports (spec §78).
  *
  * Mounted by the parent admin router at `/api/admin/export`; the auth gate
  * (`adminPanelAuth`, `requireAdmin`, the admin rate limiter) is applied by that
  * parent, so each route below only adds its own `requirePermission` key.
  *
+ * Each entity is downloadable in two formats — `.csv` and `.xlsx` — and they
+ * share one definition: the same query schema, the same column/value builders
+ * and the same batched fetch. `registerExport` wires the pair together, so a
+ * filter added for a list screen cannot end up applied to one format and not
+ * the other. The two runners differ only in how the already-selected rows are
+ * serialised.
+ *
  * Every handler follows the same contract:
  *  - it accepts the SAME filters as the matching list endpoint (status / type /
  *    userId / search — plus from/to where the list actually has a date range),
  *    and ignores page/limit;
- *  - it streams through `streamCsv` (bounded batches, hard row cap, UTF-8 BOM,
- *    formula-injection-safe cells);
- *  - it writes exactly ONE `recordAudit` row describing what was exported.
+ *  - it is bounded by the same hard row cap ({@link EXPORT_MAX_ROWS}). CSV streams
+ *    through `streamCsv`; XLSX builds the same rows in memory and emits an .xlsx;
+ *  - it writes exactly ONE `recordAudit` row describing what was exported. The
+ *    audit is about the EXPORT, not the format, so both write the same action and
+ *    the same `newValue` shape.
  *
  * Row selection is reused from the existing admin services wherever possible so
  * an export can never drift from what the panel shows on screen. The two
@@ -266,7 +281,7 @@ const REVENUE_COLUMNS: ReadonlyArray<CsvColumn<RevenueRow>> = [
  * ------------------------------------------------------------------ */
 
 interface ExportSpec<T> {
-  /** Used in the download filename: `botflow-<entity>-<YYYY-MM-DD>.csv`. */
+  /** Used in the download filename: `botflow-<entity>-<YYYY-MM-DD>.<ext>`. */
   entity: string;
   /** Audit action, e.g. EXPORT_USERS. */
   action: string;
@@ -281,7 +296,83 @@ function batchPager(skip: number, take: number): { page: number; limit: number; 
   return { page: skip / take + 1, limit: take, skip, take };
 }
 
-async function runExport<T>(req: Request, res: Response, next: NextFunction, spec: ExportSpec<T>): Promise<void> {
+/**
+ * Convert a row value to something the workbook can hold. Dates become ISO-8601
+ * strings (never locale-dependent), integral BigInts stay numeric, and a
+ * non-finite number falls back to its text form rather than producing `<v>NaN</v>`,
+ * which Excel treats as a corrupt cell.
+ */
+function toXlsxCell(value: unknown): XlsxCell {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') {
+    return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : value.toString();
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    return JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v)) ?? null;
+  }
+  return String(value);
+}
+
+/**
+ * Pull every exportable row through the same bounded batching `streamCsv` uses,
+ * stopping at {@link EXPORT_MAX_ROWS} and probing once beyond the cap so
+ * "complete" and "truncated" are distinguishable. The CSV path streams; XLSX
+ * needs all rows before it can write the sheet, so this collects them.
+ */
+async function collectExportRows<T>(
+  fetchBatch: (args: { skip: number; take: number }) => Promise<T[]>,
+): Promise<{ rows: T[]; truncated: boolean }> {
+  const rows: T[] = [];
+  let truncated = false;
+
+  for (;;) {
+    const remaining = EXPORT_MAX_ROWS - rows.length;
+    if (remaining <= 0) {
+      truncated = (await fetchBatch({ skip: rows.length, take: 1 })).length > 0;
+      break;
+    }
+
+    const take = Math.min(EXPORT_BATCH_SIZE, remaining);
+    const batch = await fetchBatch({ skip: rows.length, take });
+    if (batch.length === 0) break;
+
+    rows.push(...batch);
+    if (batch.length < take) break; // source exhausted
+    if (rows.length < EXPORT_MAX_ROWS) continue;
+
+    truncated = (await fetchBatch({ skip: rows.length, take: 1 })).length > 0;
+    break;
+  }
+
+  return { rows, truncated };
+}
+
+/**
+ * The audit row for one export. Deliberately independent of the output format:
+ * what an audit exists to answer is "who pulled which rows", not "as what file".
+ */
+async function recordExportAudit<T>(
+  req: Request,
+  spec: ExportSpec<T>,
+  rows: number,
+  truncated: boolean,
+): Promise<void> {
+  // Mandatory: exports of user / financial data are sensitive. ONE row per
+  // export, recording the acting admin, the row count and the filters used.
+  await recordAudit({
+    actorId: adminId(req),
+    action: spec.action,
+    targetType: 'EXPORT',
+    newValue: { rows, truncated, filters: spec.filters },
+  });
+}
+
+async function runCsvExport<T>(req: Request, res: Response, next: NextFunction, spec: ExportSpec<T>): Promise<void> {
   try {
     const stamp = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -290,14 +381,7 @@ async function runExport<T>(req: Request, res: Response, next: NextFunction, spe
     const result = await streamCsv(res, spec.columns, spec.fetchBatch);
     res.end();
 
-    // Mandatory: exports of user / financial data are sensitive. ONE row per
-    // export, recording the acting admin, the row count and the filters used.
-    await recordAudit({
-      actorId: adminId(req),
-      action: spec.action,
-      targetType: 'EXPORT',
-      newValue: { rows: result.rows, truncated: result.truncated, filters: spec.filters },
-    });
+    await recordExportAudit(req, spec, result.rows, result.truncated);
   } catch (err) {
     // A failure before the first byte can still produce a normal JSON error;
     // once the CSV has started streaming that is impossible, so the response
@@ -311,248 +395,283 @@ async function runExport<T>(req: Request, res: Response, next: NextFunction, spe
   }
 }
 
+async function runXlsxExport<T>(req: Request, res: Response, next: NextFunction, spec: ExportSpec<T>): Promise<void> {
+  try {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const { rows, truncated } = await collectExportRows(spec.fetchBatch);
+
+    const header: XlsxCell[] = spec.columns.map((column) => column.header);
+    const body: XlsxCell[][] = rows.map((row) =>
+      spec.columns.map((column) => toXlsxCell(column.value(row))),
+    );
+    const sheetRows: XlsxCell[][] = [header, ...body];
+    if (truncated) {
+      // Same contract as CSV: a truncation is stated, never silent.
+      sheetRows.push([
+        `# EXPORT TRUNCATED: returned the first ${rows.length} rows (hard cap ${EXPORT_MAX_ROWS}). ` +
+          'Narrow the filters for a complete file.',
+      ]);
+    }
+
+    const buffer = buildXlsx([{ name: spec.entity, rows: sheetRows }]);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="botflow-${spec.entity}-${stamp}.xlsx"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    res.end(buffer);
+
+    await recordExportAudit(req, spec, rows.length, truncated);
+  } catch (err) {
+    // The workbook is assembled fully before any byte is written, so a failure
+    // here has not sent headers and can still be a normal JSON error.
+    if (res.headersSent) {
+      logger.error({ err, entity: spec.entity }, 'admin XLSX export failed mid-stream');
+      res.end();
+      return;
+    }
+    next(err);
+  }
+}
+
 /* ------------------------------------------------------------------
- *  GET /api/admin/export/*.csv
+ *  Entity specs — one definition per table, reused by both formats.
  * ------------------------------------------------------------------ */
 
-exportRouter.get(
-  '/users.csv',
-  requirePermission('users.view'),
-  validate({ query: usersExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof usersExportQuery>;
-    await runExport(req, res, next, {
-      entity: 'users',
-      action: 'EXPORT_USERS',
-      filters: { search: query.search ?? null },
-      columns: USER_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const page = await listUsersAdmin(query.search, batchPager(skip, take));
-        return page.items;
-      },
-    });
-  },
-);
+function usersSpec(query: z.infer<typeof usersExportQuery>): ExportSpec<AdminUserListItem> {
+  return {
+    entity: 'users',
+    action: 'EXPORT_USERS',
+    filters: { search: query.search ?? null },
+    columns: USER_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const page = await listUsersAdmin(query.search, batchPager(skip, take));
+      return page.items;
+    },
+  };
+}
 
-exportRouter.get(
-  '/channels.csv',
-  requirePermission('channels.view'),
-  validate({ query: channelsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof channelsExportQuery>;
-    await runExport(req, res, next, {
-      entity: 'channels',
-      action: 'EXPORT_CHANNELS',
-      filters: { status: query.status ?? null },
-      columns: CHANNEL_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const page = await listChannelsAdmin({ status: query.status }, batchPager(skip, take));
-        return page.items;
-      },
-    });
-  },
-);
+function channelsSpec(query: z.infer<typeof channelsExportQuery>): ExportSpec<AdminChannelItem> {
+  return {
+    entity: 'channels',
+    action: 'EXPORT_CHANNELS',
+    filters: { status: query.status ?? null },
+    columns: CHANNEL_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const page = await listChannelsAdmin({ status: query.status }, batchPager(skip, take));
+      return page.items;
+    },
+  };
+}
 
-exportRouter.get(
-  '/campaigns.csv',
-  requirePermission('campaigns.view'),
-  validate({ query: campaignsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof campaignsExportQuery>;
-    await runExport(req, res, next, {
-      entity: 'campaigns',
-      action: 'EXPORT_CAMPAIGNS',
-      filters: { status: query.status ?? null },
-      columns: CAMPAIGN_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const page = await listCampaignsAdmin({ status: query.status }, batchPager(skip, take));
-        return page.items;
-      },
-    });
-  },
-);
+function campaignsSpec(query: z.infer<typeof campaignsExportQuery>): ExportSpec<AdminCampaignItem> {
+  return {
+    entity: 'campaigns',
+    action: 'EXPORT_CAMPAIGNS',
+    filters: { status: query.status ?? null },
+    columns: CAMPAIGN_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const page = await listCampaignsAdmin({ status: query.status }, batchPager(skip, take));
+      return page.items;
+    },
+  };
+}
 
-exportRouter.get(
-  '/transactions.csv',
-  requirePermission('deposits.view'),
-  validate({ query: transactionsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof transactionsExportQuery>;
-    const where: Prisma.TransactionWhereInput = {
-      ...(query.type ? { type: query.type } : {}),
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.userId ? { userId: query.userId } : {}),
-      ...(query.from || query.to
-        ? {
-            createdAt: {
-              ...(query.from ? { gte: query.from } : {}),
-              ...(query.to ? { lte: query.to } : {}),
-            },
-          }
-        : {}),
-    };
-
-    await runExport(req, res, next, {
-      entity: 'transactions',
-      action: 'EXPORT_TRANSACTIONS',
-      filters: {
-        type: query.type ?? null,
-        status: query.status ?? null,
-        userId: query.userId ?? null,
-        from: query.from ? query.from.toISOString() : null,
-        to: query.to ? query.to.toISOString() : null,
-      },
-      columns: TRANSACTION_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const rows = await prisma.transaction.findMany({
-          where,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          skip,
-          take,
-          select: {
-            id: true,
-            userId: true,
-            type: true,
-            status: true,
-            amountCents: true,
-            currency: true,
-            balanceAfter: true,
-            reference: true,
-            referenceType: true,
-            description: true,
-            createdAt: true,
-            user: { select: { id: true, username: true, firstName: true, lastName: true } },
+function transactionsSpec(query: z.infer<typeof transactionsExportQuery>): ExportSpec<AdminTransactionRow> {
+  const where: Prisma.TransactionWhereInput = {
+    ...(query.type ? { type: query.type } : {}),
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.userId ? { userId: query.userId } : {}),
+    ...(query.from || query.to
+      ? {
+          createdAt: {
+            ...(query.from ? { gte: query.from } : {}),
+            ...(query.to ? { lte: query.to } : {}),
           },
-        });
-        return rows.map(({ user, ...tx }): AdminTransactionRow => ({ ...tx, userName: displayName(user) }));
-      },
-    });
-  },
-);
+        }
+      : {}),
+  };
 
-exportRouter.get(
-  '/deposits.csv',
-  requirePermission('deposits.view'),
-  validate({ query: depositsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof depositsExportQuery>;
-    await runExport(req, res, next, {
-      entity: 'deposits',
-      action: 'EXPORT_DEPOSITS',
-      filters: { status: query.status ?? null },
-      columns: DEPOSIT_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const page = await listDepositsAdmin({ status: query.status }, batchPager(skip, take));
-        return page.items;
-      },
-    });
-  },
-);
+  return {
+    entity: 'transactions',
+    action: 'EXPORT_TRANSACTIONS',
+    filters: {
+      type: query.type ?? null,
+      status: query.status ?? null,
+      userId: query.userId ?? null,
+      from: query.from ? query.from.toISOString() : null,
+      to: query.to ? query.to.toISOString() : null,
+    },
+    columns: TRANSACTION_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const rows = await prisma.transaction.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          status: true,
+          amountCents: true,
+          currency: true,
+          balanceAfter: true,
+          reference: true,
+          referenceType: true,
+          description: true,
+          createdAt: true,
+          user: { select: { id: true, username: true, firstName: true, lastName: true } },
+        },
+      });
+      return rows.map(({ user, ...tx }): AdminTransactionRow => ({ ...tx, userName: displayName(user) }));
+    },
+  };
+}
 
-exportRouter.get(
-  '/withdrawals.csv',
-  requirePermission('withdrawals.view'),
-  validate({ query: withdrawalsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof withdrawalsExportQuery>;
-    await runExport(req, res, next, {
-      entity: 'withdrawals',
-      action: 'EXPORT_WITHDRAWALS',
-      filters: { status: query.status ?? null },
-      columns: WITHDRAWAL_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const page = await listWithdrawalsAdmin({ status: query.status }, batchPager(skip, take));
-        return page.items;
-      },
-    });
-  },
-);
+function depositsSpec(query: z.infer<typeof depositsExportQuery>): ExportSpec<AdminDepositItem> {
+  return {
+    entity: 'deposits',
+    action: 'EXPORT_DEPOSITS',
+    filters: { status: query.status ?? null },
+    columns: DEPOSIT_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const page = await listDepositsAdmin({ status: query.status }, batchPager(skip, take));
+      return page.items;
+    },
+  };
+}
 
-exportRouter.get(
-  '/earnings.csv',
-  requirePermission('deposits.view'),
-  validate({ query: earningsExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof earningsExportQuery>;
-    const where: Prisma.PublisherEarningWhereInput = {
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.userId ? { publisherId: query.userId } : {}),
-      ...(query.channelId ? { channelId: query.channelId } : {}),
-      ...(query.from || query.to
-        ? {
-            createdAt: {
-              ...(query.from ? { gte: query.from } : {}),
-              ...(query.to ? { lte: query.to } : {}),
-            },
-          }
-        : {}),
-    };
+function withdrawalsSpec(query: z.infer<typeof withdrawalsExportQuery>): ExportSpec<AdminWithdrawalItem> {
+  return {
+    entity: 'withdrawals',
+    action: 'EXPORT_WITHDRAWALS',
+    filters: { status: query.status ?? null },
+    columns: WITHDRAWAL_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const page = await listWithdrawalsAdmin({ status: query.status }, batchPager(skip, take));
+      return page.items;
+    },
+  };
+}
 
-    await runExport(req, res, next, {
-      entity: 'earnings',
-      action: 'EXPORT_EARNINGS',
-      filters: {
-        status: query.status ?? null,
-        userId: query.userId ?? null,
-        channelId: query.channelId ?? null,
-        from: query.from ? query.from.toISOString() : null,
-        to: query.to ? query.to.toISOString() : null,
-      },
-      columns: EARNING_COLUMNS,
-      fetchBatch: async ({ skip, take }) => {
-        const rows = await prisma.publisherEarning.findMany({
-          where,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          skip,
-          take,
-          select: {
-            id: true,
-            publisherId: true,
-            channelId: true,
-            campaignId: true,
-            grossCents: true,
-            platformFeeCents: true,
-            netCents: true,
-            status: true,
-            availableAt: true,
-            paidAt: true,
-            createdAt: true,
-            channel: { select: { title: true } },
-            publisher: { select: { username: true, firstName: true, lastName: true } },
+function earningsSpec(query: z.infer<typeof earningsExportQuery>): ExportSpec<AdminEarningRow> {
+  const where: Prisma.PublisherEarningWhereInput = {
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.userId ? { publisherId: query.userId } : {}),
+    ...(query.channelId ? { channelId: query.channelId } : {}),
+    ...(query.from || query.to
+      ? {
+          createdAt: {
+            ...(query.from ? { gte: query.from } : {}),
+            ...(query.to ? { lte: query.to } : {}),
           },
-        });
-        return rows.map(
-          ({ channel, publisher, ...earning }): AdminEarningRow => ({
-            ...earning,
-            channelTitle: channel.title,
-            publisherName: displayName(publisher),
-          }),
-        );
-      },
-    });
-  },
-);
+        }
+      : {}),
+  };
 
-exportRouter.get(
-  '/revenue.csv',
-  requirePermission('dashboard.view'),
-  validate({ query: revenueExportQuery }),
-  async (req, res, next) => {
-    const query = req.query as unknown as z.infer<typeof revenueExportQuery>;
-    const days = query.days ?? 30;
+  return {
+    entity: 'earnings',
+    action: 'EXPORT_EARNINGS',
+    filters: {
+      status: query.status ?? null,
+      userId: query.userId ?? null,
+      channelId: query.channelId ?? null,
+      from: query.from ? query.from.toISOString() : null,
+      to: query.to ? query.to.toISOString() : null,
+    },
+    columns: EARNING_COLUMNS,
+    fetchBatch: async ({ skip, take }) => {
+      const rows = await prisma.publisherEarning.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+        select: {
+          id: true,
+          publisherId: true,
+          channelId: true,
+          campaignId: true,
+          grossCents: true,
+          platformFeeCents: true,
+          netCents: true,
+          status: true,
+          availableAt: true,
+          paidAt: true,
+          createdAt: true,
+          channel: { select: { title: true } },
+          publisher: { select: { username: true, firstName: true, lastName: true } },
+        },
+      });
+      return rows.map(
+        ({ channel, publisher, ...earning }): AdminEarningRow => ({
+          ...earning,
+          channelTitle: channel.title,
+          publisherName: displayName(publisher),
+        }),
+      );
+    },
+  };
+}
 
-    await runExport(req, res, next, {
-      entity: 'revenue',
-      action: 'EXPORT_REVENUE',
-      filters: { days },
-      columns: REVENUE_COLUMNS,
-      fetchBatch: async ({ skip }) => {
-        // Revenue is an aggregated per-day series (≤366 rows), so it is built
-        // once and served in a single batch.
-        if (skip > 0) return [];
-        const byDay = await revenueByDay(days);
-        return byDay.map((day): RevenueRow => ({ date: day.date, revenueCents: day.revenueCents }));
-      },
-    });
-  },
-);
+function revenueSpec(query: z.infer<typeof revenueExportQuery>): ExportSpec<RevenueRow> {
+  const days = query.days ?? 30;
+  return {
+    entity: 'revenue',
+    action: 'EXPORT_REVENUE',
+    filters: { days },
+    columns: REVENUE_COLUMNS,
+    fetchBatch: async ({ skip }) => {
+      // Revenue is an aggregated per-day series (≤366 rows), so it is built
+      // once and served in a single batch.
+      if (skip > 0) return [];
+      const byDay = await revenueByDay(days);
+      return byDay.map((day): RevenueRow => ({ date: day.date, revenueCents: day.revenueCents }));
+    },
+  };
+}
+
+/* ------------------------------------------------------------------
+ *  Route wiring — both formats per entity, one spec each.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Register `/<entity>.csv` and `/<entity>.xlsx` from a single spec builder, so
+ * the two files always select the same rows. `permission` is the same key for
+ * both, matching the entity's list screen.
+ */
+function registerExport<Q, T>(
+  entity: string,
+  permission: string,
+  schema: z.ZodTypeAny,
+  build: (query: Q) => ExportSpec<T>,
+): void {
+  exportRouter.get(
+    `/${entity}.csv`,
+    requirePermission(permission),
+    validate({ query: schema }),
+    async (req, res, next) => {
+      await runCsvExport(req, res, next, build(req.query as unknown as Q));
+    },
+  );
+
+  exportRouter.get(
+    `/${entity}.xlsx`,
+    requirePermission(permission),
+    validate({ query: schema }),
+    async (req, res, next) => {
+      await runXlsxExport(req, res, next, build(req.query as unknown as Q));
+    },
+  );
+}
+
+registerExport('users', 'users.view', usersExportQuery, usersSpec);
+registerExport('channels', 'channels.view', channelsExportQuery, channelsSpec);
+registerExport('campaigns', 'campaigns.view', campaignsExportQuery, campaignsSpec);
+registerExport('transactions', 'deposits.view', transactionsExportQuery, transactionsSpec);
+registerExport('deposits', 'deposits.view', depositsExportQuery, depositsSpec);
+registerExport('withdrawals', 'withdrawals.view', withdrawalsExportQuery, withdrawalsSpec);
+registerExport('earnings', 'deposits.view', earningsExportQuery, earningsSpec);
+registerExport('revenue', 'dashboard.view', revenueExportQuery, revenueSpec);

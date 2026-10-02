@@ -220,3 +220,43 @@ input[type='number']::-webkit-inner-spin-button {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Print / Save as PDF.
+ *
+ * The export screen offers the browser's print dialog instead of a server-side
+ * PDF (which would need a rendering dependency this project does not carry).
+ * Printing must therefore produce the table, not the panel around it.
+ *
+ * The admin shell (sidebar, top bar, toasts) has no stable class hook, so rather
+ * than guessing at structural selectors this hides everything with `visibility`
+ * and re-shows only the marked print area. `visibility` (not `display`) keeps
+ * the table's own layout intact while its ancestors are hidden.
+ * --------------------------------------------------------------------------- */
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .export-print-area,
+  .export-print-area * {
+    visibility: visible !important;
+  }
+
+  .export-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+  }
+
+  /* Controls that make no sense on paper (pagers, buttons, format notes). */
+  .export-no-print {
+    display: none !important;
+  }
+}

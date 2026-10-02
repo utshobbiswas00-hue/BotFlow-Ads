@@ -92,6 +92,17 @@ const AdminCryptoTransfersPage = lazy(() =>
 );
 const AdminAdminsPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminAdminsPage })));
 const AdminNotFoundPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminNotFoundPage })));
+// Round 6: activity stream, per-entity analytics, error log, API logs, exports.
+const AdminActivityPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminActivityPage })));
+const AdminCampaignAnalyticsPage = lazy(() =>
+  import('./admin').then((m) => ({ default: m.AdminCampaignAnalyticsPage })),
+);
+const AdminChannelAnalyticsPage = lazy(() =>
+  import('./admin').then((m) => ({ default: m.AdminChannelAnalyticsPage })),
+);
+const AdminErrorsPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminErrorsPage })));
+const AdminApiLogsPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminApiLogsPage })));
+const AdminExportPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminExportPage })));
 // The /api/admin/ops surface — a separate router in routes/policy.routes.ts.
 const AdminOpsPage = lazy(() => import('./admin').then((m) => ({ default: m.AdminOpsPage })));
 const AdminCreativeReviewPage = lazy(() =>
@@ -213,6 +224,13 @@ export const router = createBrowserRouter([
       { path: 'broadcast', element: <AdminBroadcastPage /> },
       { path: 'broadcast/report', element: <AdminBroadcastReportPage /> },
       { path: 'notifications', element: <AdminNotificationsPage /> },
+      // Round 6.
+      { path: 'activity', element: <AdminActivityPage /> },
+      { path: 'export', element: <AdminExportPage /> },
+      { path: 'system/errors', element: <AdminErrorsPage /> },
+      { path: 'system/api-logs', element: <AdminApiLogsPage /> },
+      { path: 'campaigns/:campaignId/analytics', element: <AdminCampaignAnalyticsPage /> },
+      { path: 'channels/:channelId/analytics', element: <AdminChannelAnalyticsPage /> },
       { path: '*', element: <AdminNotFoundPage /> },
     ],
   },

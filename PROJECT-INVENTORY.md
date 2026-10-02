@@ -200,6 +200,6 @@ All middleware lives in `backend/src/middleware/`. Request typing: `backend/src/
 | Step | Reality |
 |---|---|
 | 3 — Admin ticket thread | One missing read path. `TicketMessage.attachmentUrl` already exists. **No migration needed.** |
-| 4 — Persistent notification inbox | **Already built** for users (model, read state, pagination, 4 routes, an inbox screen, 12 call sites). What is missing is an **admin** inbox; `alertAdmins()` writes no DB row. An admin is a `User`, so this needs **no migration**. |
+| 4 — Persistent notification inbox | **Built for users** (model, read state, pagination, 4 routes, an inbox screen, 12 call sites). The admin inbox was added on its own `admin_notifications` table (`AdminNotification` + migration `20261002140000_add_admin_notifications`); `alertAdmins()` writes it. **Correction:** this row previously said no migration was needed — that was the plan, and the delivered implementation differs. |
 | 5 — Broadcast delivery report | **No broadcast model exists.** Per-recipient state lives only as `Notification.delivered` / `sentAt`. Needs a schema change; I cannot apply a migration from this workspace (no `.env`, no `DATABASE_URL`). |
 | 6 — Array settings | Validation-only failure; `Setting.value` is already `Json` with a `json` value type and `getArraySetting()` already reads them. **No migration needed.** |

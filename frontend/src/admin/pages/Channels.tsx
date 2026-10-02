@@ -14,7 +14,7 @@
  * Note: `ChannelSummary` carries no `createdAt`, so the table shows what the
  * contract actually provides — performance and status, not a join date.
  */
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { categoryLabel, formatMoney, groupNumber } from '../../lib/format';
 import { qk } from '../../lib/queryClient';
@@ -94,7 +94,15 @@ export function AdminChannelsPage() {
       header: 'Channel',
       render: (c) => (
         <TwoLine
-          primary={c.title}
+          primary={
+            <Link
+              to={`/admin/channels/${encodeURIComponent(c.id)}/analytics`}
+              className="text-link hover:underline"
+              title="Open per-channel analytics"
+            >
+              {c.title}
+            </Link>
+          }
           secondary={
             <span className="num">
               {c.username ? `@${c.username.replace(/^@/, '')}` : 'private'} · {categoryLabel(c.category)}

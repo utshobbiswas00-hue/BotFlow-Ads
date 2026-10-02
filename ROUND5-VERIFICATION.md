@@ -56,9 +56,16 @@ reachable from this environment, so those were skipped. This is the main coverag
 
 ### Step 4 — Notification inbox (+ the real gap)
 
-**Finding:** the persistent user inbox already existed — model, read/unread, `readAt`, pagination,
-4 routes, an inbox screen, 12 call sites. **No new model, no migration** (an admin is a `User`).
-The actual gap was `alertAdmins()` writing no database row, so ops alerts vanished.
+**Finding:** the persistent *user* inbox already existed — model, read/unread, `readAt`, pagination,
+4 routes, an inbox screen, 12 call sites. The actual gap was `alertAdmins()` writing no database row,
+so ops alerts vanished.
+
+**Correction to the first version of this report:** it claimed no new model and no migration. That is
+no longer true and was wrong to state. The admin inbox has its **own** `admin_notifications` table
+(`AdminNotification` model + migration `20261002140000_add_admin_notifications`), so admin read state
+is kept separate from the customer inbox. `alertAdmins()` writes `adminNotification.createMany` and
+the admin routes read `adminNotification` — one store, consistently used, with the customer
+`Notification` paths untouched.
 
 - `backend/src/routes/admin/notifications.routes.ts` (new, 165 lines) — gated
   `requirePermission('dashboard.view')`; `GET /`, `GET /unread-count`, `POST /:id/read`,

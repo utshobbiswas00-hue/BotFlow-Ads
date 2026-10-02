@@ -7,6 +7,8 @@ import { analyticsExtraRouter } from './analyticsExtra.routes';
 import { analyticsRouter } from './analytics.routes';
 import { attentionRouter } from './attention.routes';
 import { blockedRouter } from './blocked.routes';
+import { activityRouter } from './activity.routes';
+import { apiLogsRouter } from './apiLogs.routes';
 import { broadcastRouter } from './broadcast.routes';
 import { adminAuthPublicRouter, adminAuthRouter } from './auth.routes';
 import { campaignRouter } from './campaign.routes';
@@ -18,6 +20,7 @@ import { deliveryRouter } from './delivery.routes';
 import { exportRouter } from './export.routes';
 import { financeRouter } from './finance.routes';
 import { moderationRouter } from './moderation.routes';
+import { errorsRouter } from './errors.routes';
 import { notificationsRouter } from './notifications.routes';
 import { planPremiumRouter } from './premium.routes';
 import { searchRouter } from './search.routes';
@@ -105,3 +108,9 @@ adminRouter.use('/broadcast', broadcastRouter);
 // The acting admin's own notification inbox. Same `notifications` table as the
 // user inbox, keyed on the admin's own user id — deliberately not a second model.
 adminRouter.use('/notifications', notificationsRouter);
+// Persisted server failures (spec 84) and the merged external-call failures (27).
+adminRouter.use('/errors', errorsRouter);
+adminRouter.use('/api-logs', apiLogsRouter);
+// The cross-entity activity stream (spec 65). Computed on read by merging recent
+// rows, so there is nothing to keep in sync.
+adminRouter.use('/activity', activityRouter);

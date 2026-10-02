@@ -17,11 +17,19 @@ import { displayName, formatDate, formatDateTime, formatMoney, parseCents } from
 import { qk } from '../../lib/queryClient';
 import { errMsg } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
-import { Icon } from '../../components/ui/icons';
+import { Icon, type IconName } from '../../components/ui/icons';
 import { Money } from '../../components/ui/Money';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { showToast } from '../../store/uiStore';
-import { adjustBalance, getUser, recalculateRisk } from '../lib/api';
+import {
+  adjustBalance,
+  banUser,
+  getUser,
+  recalculateRisk,
+  suspendUser,
+  unbanUser,
+  unsuspendUser,
+} from '../lib/api';
 import { useAdminSession } from '../lib/session';
 import { AdminPageHeader, KpiGrid, KpiTile, Section } from '../components/Kpi';
 import { DataTable, Mono, TwoLine, type Column } from '../components/DataTable';
@@ -39,6 +47,7 @@ export function AdminUserDetailPage() {
   const queryClient = useQueryClient();
   const { can } = useAdminSession();
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [moderation, setModeration] = useState<ModerationAction | null>(null);
 
   const query = useQuery({
     queryKey: qk.adminUser(id),
@@ -65,6 +74,31 @@ export function AdminUserDetailPage() {
   const risk = useMutation({
     mutationFn: () => recalculateRisk(id),
     onSuccess: (res) => showToast('success', `Risk score recalculated: ${res.score}`),
+    onError: (e) => showToast('error', errMsg(e)),
+  });
+
+  // One mutation for all four moderation endpoints. The dossier and the user
+  // LIST both change when a status flips, so both caches are invalidated — a
+  // stale list row showing ACTIVE after a ban is how an operator bans twice.
+  const moderate = useMutation({
+    mutationFn: ({ action, reason }: { action: ModerationAction; reason: string }) => {
+      switch (action) {
+        case 'suspend':
+          return suspendUser(id, reason);
+        case 'ban':
+          return banUser(id, reason);
+        case 'unsuspend':
+          return unsuspendUser(id);
+        case 'unban':
+          return unbanUser(id);
+      }
+    },
+    onSuccess: (_res, vars) => {
+      showToast('success', MODERATION_META[vars.action].toast);
+      setModeration(null);
+      void queryClient.invalidateQueries({ queryKey: qk.adminUser(id) });
+      void queryClient.invalidateQueries({ queryKey: qk.adminUsers });
+    },
     onError: (e) => showToast('error', errMsg(e)),
   });
 
@@ -162,6 +196,10 @@ export function AdminUserDetailPage() {
                     <Icon name="chevronRight" size={13} />
                   </Link>
                 </div>
+
+                {can('users.manage') ? (
+                  <ModerationPanel profile={d.profile} onAction={setModeration} />
+                ) : null}
 
                 <Section title="Publisher earnings" description="Grouped by the earning row's own status.">
                   <div className="bg-surface border border-line rounded-2xl divide-y divide-line/60 text-sm">
@@ -279,6 +317,47 @@ export function AdminUserDetailPage() {
                 adjust.mutate({ cents, reason: values.reason ?? '' });
               }}
             />
+
+            {moderation && can('users.manage') ? (
+              <ConfirmDialog
+                open
+                title={MODERATION_META[moderation].title}
+                description={MODERATION_META[moderation].description}
+                confirmLabel={MODERATION_META[moderation].confirmLabel}
+                danger={MODERATION_META[moderation].danger}
+                pending={moderate.isPending}
+                fields={
+                  MODERATION_META[moderation].needsReason
+                    ? [
+                        {
+                          name: 'reason',
+                          label: 'Reason (3–500 characters)',
+                          type: 'textarea',
+                          required: true,
+                          maxLength: 500,
+                          hint: 'Stored as the audit-facing record of why and shown on this dossier while the status lasts.',
+                        },
+                      ]
+                    : []
+                }
+                onCancel={() => setModeration(null)}
+                onConfirm={(values) => {
+                  const meta = MODERATION_META[moderation];
+                  if (meta.needsReason) {
+                    const reason = (values.reason ?? '').trim();
+                    // The API requires 3..500; the dialog's `required` blocks an
+                    // empty box but not a 1-character one.
+                    if (reason.length < 3) {
+                      showToast('error', 'Enter a reason of at least 3 characters');
+                      return;
+                    }
+                    moderate.mutate({ action: moderation, reason });
+                  } else {
+                    moderate.mutate({ action: moderation, reason: '' });
+                  }
+                }}
+              />
+            ) : null}
           </>
         ) : null}
       </QueryState>
@@ -292,6 +371,151 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
       <dt className="text-mute shrink-0">{label}</dt>
       <dd className="font-medium text-right min-w-0 truncate">{value}</dd>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------
+ *  Moderation (spec §9, §10, §45)
+ *
+ *  The four endpoints existed backend-only. Which control appears is a pure
+ *  function of the CURRENT `profile.status` — offering "Suspend" on a BANNED
+ *  account, or "Unsuspend" on an ACTIVE one, is a guaranteed 409 from the
+ *  service, so those buttons are never rendered rather than shown disabled.
+ *  Suspending and banning are destructive: each dialog names the concrete
+ *  consequence (telegramAuth rejects SUSPENDED/BANNED on every request) before
+ *  the operator can confirm.
+ * ------------------------------------------------------------------ */
+
+type ModerationAction = 'suspend' | 'ban' | 'unsuspend' | 'unban';
+
+interface ModerationMeta {
+  title: string;
+  confirmLabel: string;
+  /** Red confirm button for the two destructive transitions. */
+  danger: boolean;
+  needsReason: boolean;
+  toast: string;
+  description: string;
+}
+
+const MODERATION_META: Record<ModerationAction, ModerationMeta> = {
+  suspend: {
+    title: 'Suspend this account',
+    confirmLabel: 'Suspend',
+    danger: true,
+    needsReason: true,
+    toast: 'User suspended',
+    description:
+      "Suspending takes effect immediately: this user's API access stops — telegramAuth rejects SUSPENDED and BANNED accounts on every request, so the bot and Mini App stop working for them until the suspension is lifted. No money is moved; balances, escrow and open campaigns are left untouched.",
+  },
+  ban: {
+    title: 'Ban this account',
+    confirmLabel: 'Ban',
+    danger: true,
+    needsReason: true,
+    toast: 'User banned',
+    description:
+      "Banning takes effect immediately: this user's API access stops — telegramAuth rejects BANNED and SUSPENDED accounts on every request. It is the same block as a suspension, but intended to be permanent until an admin lifts it. No money is moved; balances are left in place.",
+  },
+  unsuspend: {
+    title: 'Lift this suspension',
+    confirmLabel: 'Unsuspend',
+    danger: false,
+    needsReason: false,
+    toast: 'Suspension lifted',
+    description:
+      'The account returns to ACTIVE and the recorded suspension reason is cleared. Access is restored immediately.',
+  },
+  unban: {
+    title: 'Lift this ban',
+    confirmLabel: 'Unban',
+    danger: false,
+    needsReason: false,
+    toast: 'Ban lifted',
+    description:
+      'The account returns to ACTIVE and the recorded ban reason is cleared. Access is restored immediately.',
+  },
+};
+
+/**
+ * The only actions each status accepts. A status the panel does not recognise
+ * (or a future one) maps to no buttons — the server is the authority, and an
+ * unknown state must not be given a guess.
+ */
+const STATUS_ACTIONS: Record<string, ModerationAction[]> = {
+  ACTIVE: ['suspend', 'ban'],
+  SUSPENDED: ['unsuspend', 'ban'],
+  BANNED: ['unban'],
+};
+
+const ACTION_ICON: Record<ModerationAction, IconName> = {
+  suspend: 'clock',
+  ban: 'alert',
+  unsuspend: 'check',
+  unban: 'check',
+};
+
+function ModerationPanel({
+  profile,
+  onAction,
+}: {
+  profile: AdminUserDetail['profile'];
+  onAction: (action: ModerationAction) => void;
+}) {
+  const actions = STATUS_ACTIONS[profile.status] ?? [];
+  // `suspendedReason` is the audit-facing record of why, when the API supplies
+  // it. Read defensively: it is optional on the wire.
+  const suspendedReason =
+    (profile as { suspendedReason?: string | null }).suspendedReason ?? null;
+
+  return (
+    <Section
+      title="Account moderation"
+      description="Suspending or banning stops this user's API access immediately (telegramAuth rejects SUSPENDED and BANNED accounts) and moves no money."
+    >
+      <div className="bg-surface border border-line rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-mute">Current status</span>
+          <StatusBadge status={profile.status} />
+        </div>
+
+        {suspendedReason ? (
+          <div className="text-xs">
+            <span className="text-mute">Recorded reason · </span>
+            <span className="font-medium break-words">{suspendedReason}</span>
+          </div>
+        ) : null}
+
+        {profile.isAdmin ? (
+          <p className="text-xs text-warn flex items-start gap-1.5">
+            <Icon name="shield" size={14} className="mt-0.5 shrink-0" />
+            <span>
+              This account is an admin. The server refuses to moderate your own account, and refuses
+              to ban an ACTIVE admin unless the actor is a SUPER_ADMIN.
+            </span>
+          </p>
+        ) : null}
+
+        {actions.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {actions.map((action) => {
+              const meta = MODERATION_META[action];
+              return (
+                <Button
+                  key={action}
+                  variant={meta.danger ? 'danger' : 'primary'}
+                  size="sm"
+                  icon={<Icon name={ACTION_ICON[action]} size={15} />}
+                  onClick={() => onAction(action)}
+                >
+                  {meta.confirmLabel}
+                </Button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 

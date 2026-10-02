@@ -5,6 +5,11 @@ import { isAppError } from '../utils/errors';
 import { ERROR_CODES } from '../config/constants';
 import { logger } from '../config/logger';
 import { isProd } from '../config/env';
+import {
+  classifyErrorCode,
+  classifyErrorSource,
+  recordError,
+} from '../services/errorLog.service';
 
 export interface ErrorBody {
   ok: false;
@@ -30,16 +35,32 @@ export function notFoundHandler(req: Request, res: Response): void {
 }
 
 /**
+ * `HTTP <method> <route pattern>` — the value persisted as `ErrorLog.context`.
+ * `req.path` (and the router's `baseUrl` + route pattern) never include a query
+ * string; `recordError` strips anything after a `?` regardless, belt and braces.
+ */
+function requestContext(req: Request): string {
+  const route = req.route?.path ? `${req.baseUrl ?? ''}${req.route.path}` : req.path;
+  return `${req.method} ${route}`;
+}
+
+/**
  * Central error translator.
  * Every failure leaves this function as a predictable JSON envelope so the
  * Mini App never has to guess at a response shape.
+ *
+ * ADDITION (spec §84): 5xx / unhandled failures are persisted via `recordError`.
+ * 4xx / app-error rejections are deliberately NOT persisted — normal validation
+ * traffic would drown the table, and a 400 is not an incident. `recordError`
+ * never throws, so the response below is byte-for-byte what it always was: no
+ * status code, body field or header is affected by the logging call.
  */
-export function errorHandler(
+export async function errorHandler(
   err: unknown,
   req: Request,
   res: Response,
   _next: NextFunction,
-): void {
+): Promise<void> {
   const requestId = req.ctx?.requestId;
 
   // ---- Known operational errors -------------------------------------
@@ -47,6 +68,14 @@ export function errorHandler(
     const status = err.statusCode;
     if (status >= 500) {
       logger.error({ err, requestId, path: req.path }, 'operational error (5xx)');
+      await recordError({
+        source: classifyErrorSource(err),
+        code: err.code,
+        message: err.message,
+        context: requestContext(req),
+        requestId,
+        userId: req.user?.id ?? null,
+      });
     } else {
       logger.warn({ code: err.code, message: err.message, requestId, path: req.path }, 'request rejected');
     }
@@ -77,6 +106,18 @@ export function errorHandler(
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     const mapped = mapPrismaError(err);
     logger.warn({ prismaCode: err.code, requestId, path: req.path }, 'prisma error');
+    // Only a mapped 5xx (a real database fault, e.g. P2021/P2022 → 503) is an
+    // incident worth persisting. A P2002/P2025 the client caused stays out.
+    if (mapped.status >= 500) {
+      await recordError({
+        source: classifyErrorSource(err),
+        code: err.code,
+        message: err.message,
+        context: requestContext(req),
+        requestId,
+        userId: req.user?.id ?? null,
+      });
+    }
     res.status(mapped.status).json({
       ok: false,
       error: { code: mapped.code, message: mapped.message, details: isProd ? undefined : err.meta, requestId },
@@ -113,6 +154,14 @@ export function errorHandler(
 
   // ---- Unknown ------------------------------------------------------
   logger.error({ err, requestId, path: req.path, method: req.method }, 'unhandled error');
+  await recordError({
+    source: classifyErrorSource(err),
+    code: classifyErrorCode(err),
+    message: anyErr?.message ?? 'Internal error',
+    context: requestContext(req),
+    requestId,
+    userId: req.user?.id ?? null,
+  });
 
   res.status(500).json({
     ok: false,

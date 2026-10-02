@@ -907,3 +907,88 @@ export interface ListQueryParams {
   to?: string;
   sort?: string;
 }
+
+/* ---------------------------------------------------------------
+ * Round 6 - the last of the spec gaps
+ * ------------------------------------------------------------- */
+
+/** A persisted server-side error, from `GET /api/admin/errors` (spec 84). */
+export interface ErrorLogRow {
+  id: string;
+  /** ERROR | WARN */
+  level: string;
+  /** HTTP | WORKER | TELEGRAM | PAYMENT | DATABASE | WEBHOOK */
+  source: string;
+  /** AppError.code, the error class name, or a Prisma code - the greppable bit. */
+  code: string | null;
+  message: string;
+  /** HTTP method + route pattern, or the job name. Never a query string. */
+  context: string | null;
+  requestId: string | null;
+  userId: string | null;
+  createdAt: string;
+}
+
+export interface ErrorLogsQuery {
+  page?: number;
+  limit?: number;
+  source?: string;
+  level?: string;
+  from?: string;
+  to?: string;
+}
+
+/**
+ * One entry in the cross-entity activity stream (spec 65).
+ *
+ * Computed by merging recent rows from several tables, not stored - so it can
+ * never fall behind the tables it summarises.
+ */
+export interface ActivityItem {
+  /** NEW_USER | NEW_CHANNEL | CAMPAIGN_CREATED | ... */
+  kind: string;
+  id: string;
+  label: string;
+  detail: string | null;
+  /** A panel route when one exists. */
+  href: string | null;
+  createdAt: string;
+}
+
+export interface ActivityFeed {
+  items: ActivityItem[];
+  generatedAt: string;
+}
+
+/** One row of the Telegram / webhook / payment API-log view (spec 27). */
+export interface ApiLogRow {
+  id: string;
+  source: string;
+  level: string;
+  code: string | null;
+  message: string;
+  context: string | null;
+  createdAt: string;
+}
+
+export interface ApiLogsQuery {
+  page?: number;
+  limit?: number;
+  source?: string;
+  from?: string;
+  to?: string;
+}
+
+/** The tables the export endpoint can produce (spec 78). */
+export type ExportEntity =
+  | 'users'
+  | 'channels'
+  | 'campaigns'
+  | 'transactions'
+  | 'deposits'
+  | 'withdrawals'
+  | 'earnings'
+  | 'revenue';
+
+export type ExportFormat = 'csv' | 'xlsx';
+

@@ -1994,3 +1994,38 @@ enum BroadcastRecipientStatus {
   /// Not attempted — the recipient was gone or blocked the bot by then.
   SKIPPED
 }
+
+// A persisted server-side error (spec section 84).
+//
+// Why persist at all: errorHandler currently logs to pino and nothing else, so a
+// 5xx at 03:00 exists only in whatever the log drain happened to keep, and nobody
+// can answer "what has been failing today" from the panel. The audit log is the
+// wrong home - it records what an ACTOR did, and most failures have no actor.
+//
+// Deliberately NOT stored: request headers, request bodies, cookies and query
+// strings. Those carry initData, session cookies and payment payloads, and an
+// error log is read by more people than a database is. `message` is truncated.
+model ErrorLog {
+  id        String  @id @default(cuid())
+  /// ERROR | WARN
+  level     String  @default("ERROR")
+  /// HTTP | WORKER | TELEGRAM | PAYMENT | DATABASE | WEBHOOK
+  source    String
+  /// Our own code when we have one (AppError.code), else the error class name or
+  /// the Prisma code - the thing you actually grep for.
+  code      String?
+  message   String
+  /// HTTP method + route pattern, or the job name for a worker failure.
+  context   String?
+  requestId String? @map("request_id")
+  /// Plain column, no relation: an error record must outlive the user it mentions,
+  /// and must not block a user deletion.
+  userId    String? @map("user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+  @@index([level, createdAt])
+  @@map("error_logs")
+}

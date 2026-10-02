@@ -98,29 +98,53 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe('a channel is added when the bot has the rights — never left PENDING', () => {
-  it('refuses the add while the bot is not an administrator, and stores nothing', async () => {
+/**
+ * Missing bot rights decide the channel's STATUS, not whether the add succeeds.
+ *
+ * These two cases used to assert that the add was refused and nothing was stored.
+ * That stopped being the contract: the service now records the rights it found and
+ * stores the channel as PENDING, so the owner can add the channel before sorting
+ * the bot out in Telegram, and `my_chat_member` promotes it to APPROVED the moment
+ * the bot really does get the rights. Refusing the add would have made that whole
+ * flow — and the channel page's "Open access" banner — unreachable, which is why
+ * the rule moved rather than the code being changed back.
+ *
+ * The property worth protecting is unchanged and is what these tests now assert:
+ * a channel is **never APPROVED without the rights**. PENDING channels cannot take
+ * an ad, so nothing can be delivered through a channel the bot cannot post to.
+ * `botReady = perms.botIsAdmin && perms.canPostMessages` is the single place that
+ * decides it.
+ */
+describe('adding a channel: missing rights change the status, never the outcome', () => {
+  it('stores it as PENDING when the bot is not an administrator, and approves nothing', async () => {
     const user = await createUser();
     tg.chat = chatInfo(-1_100_000_001);
     tg.perms = { ...NO_RIGHTS };
 
-    await expect(addChannel(user.id, { channelUsername: 'chan1100000001' })).rejects.toBeInstanceOf(
-      ValidationError,
-    );
-    // The point of the rule: no half-added row is left behind for the owner to
-    // stare at while a permission that may never come is pending.
-    expect(await prisma.channel.count()).toBe(0);
+    const channel = await addChannel(user.id, { channelUsername: 'chan1100000001' });
+
+    // Stored — the owner's work is not thrown away, and a row exists to promote later.
+    expect(await prisma.channel.count()).toBe(1);
+    // But inert: not approved, so no ad can be delivered through it.
+    expect(channel.status).toBe('PENDING');
+    expect(channel.approvedAt).toBeNull();
+    // And the rights that were actually observed are recorded, not assumed.
+    expect(channel.botIsAdmin).toBe(false);
+    expect(channel.canPostMessages).toBe(false);
   });
 
-  it('refuses when the bot is an administrator WITHOUT the post-messages right', async () => {
+  it('stores it as PENDING when the bot is an administrator WITHOUT the post-messages right', async () => {
     const user = await createUser();
     tg.chat = chatInfo(-1_100_000_002);
     tg.perms = { botIsAdmin: true, canPostMessages: false, canEditMessages: false, canDeleteMessages: false };
 
-    await expect(addChannel(user.id, { channelUsername: 'chan1100000002' })).rejects.toBeInstanceOf(
-      ValidationError,
-    );
-    expect(await prisma.channel.count()).toBe(0);
+    const channel = await addChannel(user.id, { channelUsername: 'chan1100000002' });
+
+    // Being an administrator is not enough — posting needs can_post_messages.
+    expect(channel.status).toBe('PENDING');
+    expect(channel.approvedAt).toBeNull();
+    expect(channel.botIsAdmin).toBe(true);
+    expect(channel.canPostMessages).toBe(false);
   });
 
   it('adds it as APPROVED, with the schedule, the moment the bot has the rights', async () => {

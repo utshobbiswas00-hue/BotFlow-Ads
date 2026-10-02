@@ -139,6 +139,9 @@ interface AdminUserRow {
 
 const ADMIN_USER_SELECT = {
   id: true,
+  // The reason a suspension was recorded. Without it the panel can show that an
+  // account is suspended but not why, and the reason is the audit-facing half.
+  suspendedReason: true,
   telegramId: true,
   username: true,
   firstName: true,

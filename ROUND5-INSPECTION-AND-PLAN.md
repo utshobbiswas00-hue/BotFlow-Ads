@@ -1,5 +1,13 @@
 # Steps 3–6 — Inspection and Change Plan
 
+> **Delivered differently, in one place.** This document is the proposal as it was
+> shown before implementation, kept unedited as a record. For step 4 it recommended
+> reusing the customer `notifications` table and said no migration was needed. The
+> implementation that shipped uses a **dedicated `admin_notifications` table**
+> (`AdminNotification` model + migration `20261002140000_add_admin_notifications`)
+> instead, so admin read state is separate from the customer inbox. The rest of the
+> plan below was followed as written.
+
 **Nothing has been modified.** This document answers the inspection questions you asked for
 and lists the exact files each step will touch, so you can approve or redirect before any
 code changes.

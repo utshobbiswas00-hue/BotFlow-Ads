@@ -7,7 +7,7 @@
  * performed from the row. `GET /admin/campaigns` returns `CAMPAIGN_SELECT`,
  * which is where these fields come from.
  */
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDate, formatMoney } from '../../lib/format';
 import { qk } from '../../lib/queryClient';
@@ -81,7 +81,18 @@ export function AdminCampaignsPage() {
       key: 'name',
       header: 'Campaign',
       render: (c) => (
-        <TwoLine primary={c.name} secondary={<Mono title={c.id}>{c.id.slice(0, 10)}…</Mono>} />
+        <TwoLine
+          primary={
+            <Link
+              to={`/admin/campaigns/${encodeURIComponent(c.id)}/analytics`}
+              className="text-link hover:underline"
+              title="Open per-campaign analytics"
+            >
+              {c.name}
+            </Link>
+          }
+          secondary={<Mono title={c.id}>{c.id.slice(0, 10)}…</Mono>}
+        />
       ),
     },
     {

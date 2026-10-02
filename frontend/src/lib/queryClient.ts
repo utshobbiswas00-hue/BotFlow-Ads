@@ -115,4 +115,8 @@ export const qk = {
     ['admin', 'broadcast', 'job', id, 'recipients'] as const,
   adminCampaignAnalytics: (id: string) => ['admin', 'analytics', 'campaign', id] as const,
   adminChannelAnalytics: (id: string) => ['admin', 'analytics', 'channel', id] as const,
+  // Round 6: error log, activity stream, API logs.
+  adminErrors: ['admin', 'errors'] as const,
+  adminActivity: ['admin', 'activity'] as const,
+  adminApiLogs: ['admin', 'api-logs'] as const,
 };

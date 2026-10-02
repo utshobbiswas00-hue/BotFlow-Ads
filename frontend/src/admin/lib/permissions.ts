@@ -178,10 +178,29 @@ export const ADMIN_NAV: AdminNavGroup[] = [
   {
     label: 'Finance',
     items: [
-      { to: '/admin/finance/deposits', label: 'Deposits', icon: 'arrowDown', permissions: ['deposits.view'] },
+      {
+        to: '/admin/finance/deposits',
+        label: 'Deposits',
+        icon: 'arrowDown',
+        permissions: ['deposits.view'],
+        // Spec 30. Every child is a status the API really accepts.
+        children: [
+          { to: '/admin/finance/deposits', label: 'All deposits' },
+          { to: '/admin/finance/deposits?status=PENDING', label: 'Pending' },
+          { to: '/admin/finance/deposits?status=VERIFIED', label: 'Verified' },
+          { to: '/admin/finance/deposits?status=REJECTED', label: 'Rejected' },
+        ],
+      },
       {
         to: '/admin/finance/withdrawals',
         label: 'Withdrawals',
+        children: [
+          { to: '/admin/finance/withdrawals', label: 'All withdrawals' },
+          { to: '/admin/finance/withdrawals?status=PENDING', label: 'Pending' },
+          { to: '/admin/finance/withdrawals?status=APPROVED', label: 'Approved' },
+          { to: '/admin/finance/withdrawals?status=PAID', label: 'Paid' },
+          { to: '/admin/finance/withdrawals?status=REJECTED', label: 'Rejected' },
+        ],
         icon: 'arrowUp',
         permissions: ['withdrawals.view'],
       },
@@ -235,6 +254,12 @@ export const ADMIN_NAV: AdminNavGroup[] = [
     label: 'Operations',
     items: [
       { to: '/admin/ops', label: 'Ops dashboard', icon: 'target', permissions: ['dashboard.view'] },
+      {
+        to: '/admin/activity',
+        label: 'Activity',
+        icon: 'clock',
+        permissions: ['dashboard.view'],
+      },
       {
         to: '/admin/attention',
         label: 'Needs attention',
@@ -298,13 +323,19 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       },
       {
         to: '/admin/system',
-        label: 'System status',
+        label: 'System',
         icon: 'target',
         permissions: ['dashboard.view'],
+        children: [
+          { to: '/admin/system', label: 'Status board' },
+          { to: '/admin/system/errors', label: 'Error log' },
+          { to: '/admin/system/api-logs', label: 'API logs' },
+        ],
       },
       { to: '/admin/plans', label: 'Premium plans', icon: 'star', permissions: ['settings.manage'] },
       { to: '/admin/settings', label: 'Settings', icon: 'settings', permissions: ['settings.manage'] },
       { to: '/admin/audit-logs', label: 'Audit log', icon: 'clock', permissions: ['audit.view'] },
+      { to: '/admin/export', label: 'Export', icon: 'arrowDown', permissions: ['audit.view'] },
       { to: '/admin/admins', label: 'Admin accounts', icon: 'shield', superAdminOnly: true },
     ],
   },

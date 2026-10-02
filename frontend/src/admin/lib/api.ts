@@ -9,7 +9,7 @@
  * an admin cannot make, but that is a convenience — these functions assume
  * nothing about being allowed, and a 403 surfaces as a normal ApiError.
  */
-import { api } from '../../lib/api';
+import { api, baseURL } from '../../lib/api';
 import type { Paginated } from '@botflow/shared';
 import type {
   AdminAccount,
@@ -32,6 +32,9 @@ import type {
   AuditLogsResult,
   BlockedAdRow,
   BlockedChannelRow,
+  ActivityFeed,
+  ApiLogRow,
+  ApiLogsQuery,
   AdminNotificationsQuery,
   AdminNotificationsResult,
   AdminTicketThread,
@@ -54,6 +57,10 @@ import type {
   CryptoAddressView,
   CryptoScanSummary,
   CryptoTransfer,
+  ErrorLogRow,
+  ErrorLogsQuery,
+  ExportEntity,
+  ExportFormat,
   DeliveryAnalytics,
   DeliveryEventRow,
   DeliveryTimelineEntry,
@@ -888,3 +895,85 @@ export const unblockAdPost = (id: string): Promise<{ id: string; status: string 
   api.delete<{ id: string; status: string }>(
     `${BASE}/blocked/ads/${encodeURIComponent(id)}/block`,
   );
+
+/* ---------------------------------------------------------------
+ * Round 6
+ * ------------------------------------------------------------- */
+
+/**
+ * Suspend / unsuspend / ban / unban a user.
+ *
+ * The endpoints existed with no way to reach them from the panel - the whole
+ * moderation surface was backend-only. A reason is mandatory for suspend and ban
+ * and is validated server-side (3..500 chars); passing an empty string gets a 400,
+ * so the UI collects it rather than sending a placeholder.
+ *
+ * The response shape is deliberately narrowed: the caller refetches the dossier,
+ * so nothing here depends on exactly what the server echoes back.
+ */
+export const suspendUser = (id: string, reason: string): Promise<{ id: string; status: string }> =>
+  api.post<{ id: string; status: string }>(
+    `${BASE}/users/${encodeURIComponent(id)}/suspend`,
+    { reason },
+  );
+
+export const unsuspendUser = (id: string): Promise<{ id: string; status: string }> =>
+  api.post<{ id: string; status: string }>(
+    `${BASE}/users/${encodeURIComponent(id)}/unsuspend`,
+    {},
+  );
+
+export const banUser = (id: string, reason: string): Promise<{ id: string; status: string }> =>
+  api.post<{ id: string; status: string }>(`${BASE}/users/${encodeURIComponent(id)}/ban`, {
+    reason,
+  });
+
+export const unbanUser = (id: string): Promise<{ id: string; status: string }> =>
+  api.post<{ id: string; status: string }>(`${BASE}/users/${encodeURIComponent(id)}/unban`, {});
+
+/** Persisted server errors (spec 84). */
+export const listErrorLogs = (q: ErrorLogsQuery = {}): Promise<Paginated<ErrorLogRow>> =>
+  api.get<Paginated<ErrorLogRow>>(`${BASE}/errors`, {
+    page: q.page,
+    limit: q.limit,
+    source: q.source || undefined,
+    level: q.level || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+  });
+
+/** The cross-entity activity stream (spec 65). */
+export const getActivityFeed = (limit = 60): Promise<ActivityFeed> =>
+  api.get<ActivityFeed>(`${BASE}/activity`, { limit });
+
+/** Telegram / webhook / payment API logs (spec 27). */
+export const listApiLogs = (q: ApiLogsQuery = {}): Promise<Paginated<ApiLogRow>> =>
+  api.get<Paginated<ApiLogRow>>(`${BASE}/api-logs`, {
+    page: q.page,
+    limit: q.limit,
+    source: q.source || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+  });
+
+/**
+ * Build a download URL for an export.
+ *
+ * A plain link rather than a fetch: the session is an HttpOnly cookie, so the
+ * browser attaches it on a normal navigation and the file streams straight to
+ * disk instead of through JS memory. No CSRF token is needed because this is a
+ * safe method - if the export ever becomes a POST, that changes.
+ */
+export function exportDownloadUrl(
+  entity: ExportEntity,
+  format: ExportFormat,
+  params: Record<string, string | number | undefined> = {},
+): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') qs.set(k, String(v));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return `${baseURL}${BASE}/export/${entity}.${format}${suffix}`;
+}
+

@@ -21,7 +21,6 @@ import { apiKeyRouter } from './advertiserApi.routes';
 import { webhookEndpointsRouter } from './webhookEndpoints.routes';
 import { billingRouter } from './billing.routes';
 import { emailRouter } from './email.routes';
-import { adminRouter } from './admin';
 
 /**
  * The user-facing API router — mounted under `/api` in app.ts.
@@ -72,5 +71,9 @@ router.use(emailRouter);
 // Mini-App click recording (authenticated, so clicks are attributed).
 router.use(trackApiRouter);
 
-// Admin panel — owned by the admin-routes workstream (exports `adminRouter`).
-router.use('/admin', adminRouter);
+// The admin panel is NOT mounted here. It used to be (`router.use('/admin', ...)`),
+// which put every /api/admin route behind the `telegramAuth()` above and made the
+// panel's own auth — including its password login — unreachable from a browser:
+// `/api/admin/auth/login` was rejected with "Telegram authentication required"
+// before the login route ran. It is mounted in app.ts, before this router, the same
+// way `publicApiRouter` is. Do not move it back.

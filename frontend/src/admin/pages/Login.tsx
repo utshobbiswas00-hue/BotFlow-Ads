@@ -28,6 +28,7 @@ import { ToastContainer } from '../../components/ui/Toast';
 import { showToast } from '../../store/uiStore';
 import { getAuthConfig, loginWithPassword } from '../lib/api';
 import { qk } from '../../lib/queryClient';
+import { isTelegram } from '../../lib/telegram';
 
 export function AdminLoginPage() {
   const navigate = useNavigate();
@@ -92,8 +93,8 @@ export function AdminLoginPage() {
                   three, or none.
                 </p>
                 <p className="text-xs text-mute mt-2">
-                  Telelgram authentication is unaffected. Open the Mini App from the BotFlow bot and
-                  the panel will recognise an admin account directly.
+                  Telegram authentication is unaffected: open the Mini App from the BotFlow bot and
+                  the panel recognises an admin account directly, with no password at all.
                 </p>
               </div>
             </div>
@@ -142,17 +143,31 @@ export function AdminLoginPage() {
         )}
 
         <div className="mt-4 flex flex-col gap-2 text-xs">
-          <Link to="/" className="inline-flex items-center gap-1.5 text-link hover:underline">
-            <Icon name="back" size={13} />
-            Back to the Mini App
-          </Link>
-          <Link
-            to="/admin"
-            className="inline-flex items-center gap-1.5 text-link hover:underline"
-          >
-            <Icon name="shield" size={13} />
-            Continue with Telegram authentication
-          </Link>
+          {/*
+            Both of these only lead anywhere inside Telegram. In a plain browser the
+            Telegram door cannot open — there is no initData to present — so the links
+            used to point back at this same page: "Continue with Telegram
+            authentication" went to /admin, which bounced straight to the login screen
+            again. Say what is true instead of offering a loop.
+          */}
+          {isTelegram() ? (
+            <>
+              <Link to="/" className="inline-flex items-center gap-1.5 text-link hover:underline">
+                <Icon name="back" size={13} />
+                Back to the Mini App
+              </Link>
+              <Link to="/admin" className="inline-flex items-center gap-1.5 text-link hover:underline">
+                <Icon name="shield" size={13} />
+                Continue with Telegram authentication
+              </Link>
+            </>
+          ) : (
+            <p className="text-[11px] text-mute">
+              Telegram authentication works only inside the Mini App. Open the BotFlow bot in Telegram
+              and start the Mini App there to use it — in a browser, sign in above with the username
+              and password configured on the server.
+            </p>
+          )}
         </div>
       </div>
     </div>

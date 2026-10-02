@@ -12,6 +12,7 @@ import { maintenanceGuard } from './middleware/maintenanceMode';
 import { limiters } from './middleware/rateLimit';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';
 import { router } from './routes';
+import { adminRouter } from './routes/admin';
 import { publicApiRouter } from './routes/publicApi.routes';
 import { healthRouter } from './routes/health.routes';
 import { trackRouter } from './routes/track.routes';
@@ -199,6 +200,19 @@ export function createApp(): express.Express {
 
   // 10. Global API rate limit — one Redis counter shared by all instances.
   app.use('/api', limiters.global);
+
+  // 10b. The staff panel's own router — mounted BEFORE the `/api` user router for
+  //      exactly the reason `publicApiRouter` above is: everything inside that
+  //      router runs behind `telegramAuth`, which demands Telegram initData. The
+  //      panel has its own two-door auth (`adminPanelAuth`: the session cookie the
+  //      password login issues, or Telegram initData it verifies itself), so while
+  //      it was mounted inside the user router the password door could never be
+  //      reached — `/api/admin/auth/config` and `/api/admin/auth/login` were both
+  //      answered with "Telegram authentication required" before any route saw
+  //      them, and the panel was usable only from inside Telegram. Verified by
+  //      request: config used to return 401 here and the login page could not be
+  //      completed in a browser.
+  app.use('/api/admin', adminRouter);
 
   // 11. Public health probes (Render uptime checks).
   app.use('/health', healthRouter);

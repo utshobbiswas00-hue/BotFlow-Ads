@@ -63,6 +63,42 @@ export function isPanelLoginEnabled(): boolean {
  * 401. The server log says which, because the operator needs to be able to fix
  * a misconfiguration.
  */
+/**
+ * Say at boot when the password door cannot be completed, instead of leaving it to be
+ * discovered one failed login at a time.
+ *
+ * The door needs a `users` row behind `ADMIN_PANEL_ADMIN_TELEGRAM_ID`: the row is
+ * created when that Telegram account first opens the bot, every panel action is
+ * attributed to it, and without it every login returns the same
+ * `401 Invalid username or password` as a wrong password. An operator with correct
+ * credentials therefore has no way to tell the two apart from the login form, and
+ * nothing in the deploy log mentioned it either.
+ *
+ * Deliberately a warning, not a refusal: the row may legitimately not exist yet — the
+ * operator has to send /start to the bot first — and refusing to boot would take away
+ * the very deployment they need in order to do that.
+ */
+export async function warnIfPanelAdminHasNoUser(): Promise<void> {
+  if (!isPanelLoginEnabled()) return;
+
+  const telegramId = env.ADMIN_PANEL_ADMIN_TELEGRAM_ID;
+  // A non-numeric id is reported by the login path already; saying it twice helps nobody.
+  if (!/^\d+$/.test(telegramId)) return;
+
+  const user = await prisma.user.findUnique({
+    where: { telegramId: BigInt(telegramId) },
+    select: { id: true },
+  });
+  if (user) return;
+
+  logger.warn(
+    { telegramId, appUrl: env.APP_URL },
+    'panel login cannot be completed yet: ADMIN_PANEL_ADMIN_TELEGRAM_ID has no user row — ' +
+      'open the bot with that Telegram account and send /start once. Until then every login ' +
+      'returns "Invalid username or password" even when the credentials are correct.',
+  );
+}
+
 export async function loginWithPassword(username: string, password: string): Promise<PanelIdentity> {
   if (!isPanelLoginEnabled()) {
     throw new ForbiddenError(

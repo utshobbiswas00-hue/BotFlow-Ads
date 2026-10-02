@@ -58,9 +58,11 @@ services:
     plan: starter
     region: singapore
     autoDeploy: true
-    # The Mini App SPA is built here too: `src/app.ts` serves frontend/dist from
-    # this service, so the Mini App and the API share ONE origin — no CORS
-    # allowlist, no build-time VITE_API_URL, no second static-site service.
+    # The SPA is built here too: `src/app.ts` serves frontend/dist (and therefore
+    # /admin) from this service, so the panel and the API share ONE origin — no CORS
+    # allowlist, no build-time VITE_API_URL. The `botflow-app` static service below is
+    # optional: keep it only if you want a separately hosted Mini App, in which case set
+    # VITE_API_URL on it and allow its origin in CORS.
     # If the SPA build step is removed the API still boots; it just logs
     # "frontend/dist not found" and serves API-only.
     buildCommand: npm ci --include=dev && npx prisma generate --schema backend/prisma/schema.prisma && npm run build -w @botflow/shared && npm run build -w @botflow/backend && npm run build -w @botflow/frontend
@@ -88,6 +90,21 @@ services:
         sync: false
       # Where /admin lives (same static site, different path).
       - key: ADMIN_PANEL_URL
+        sync: false
+      # --- the staff panel's username + password door ----------------------
+      # All three or none: partially set, the service refuses to boot; none set, and
+      # the panel can only be reached from inside Telegram.
+      - key: ADMIN_PANEL_USERNAME
+        sync: false
+      # The scrypt hash, never the password:
+      #   node backend/scripts/hash-admin-password.mjs
+      # Must start with "scrypt$" (178 characters) or the service refuses to boot.
+      - key: ADMIN_PANEL_PASSWORD_HASH
+        sync: false
+      # The Telegram account panel actions are attributed to. It has to have opened the
+      # bot once, or there is no users row to attribute to and every login fails looking
+      # exactly like a wrong password. The app warns about this at boot.
+      - key: ADMIN_PANEL_ADMIN_TELEGRAM_ID
         sync: false
       # --- secrets (never commit; fill in the Render dashboard) -----------
       # Bot token from @BotFather.
@@ -155,6 +172,12 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      # The worker never receives a webhook, but it loads the same env schema, and that
+      # schema refuses to start when the bot token is set without this secret. Omit it
+      # here and the API boots while the worker dies — and the worker is what runs the
+      # scheduled deliveries. Same value as the API service.
+      - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
       # The worker is what runs the crypto deposit scan, so it needs the chain
       # endpoints as well as the API does. Same value on both services.

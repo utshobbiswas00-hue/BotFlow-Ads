@@ -7,6 +7,7 @@ import { runMigrationsOnBoot } from './db/migrate';
 import { redis, pingRedis, gracefulRedisShutdown } from './db/redis';
 import { closeQueues } from './queues/queue';
 import { setupWebhook } from './bot/webhook';
+import { warnIfPanelAdminHasNoUser } from './services/adminPanelAuth.service';
 import { configureBotCommands, startBotPolling } from './bot/bot';
 import { seedDefaultPlans } from './services/premium.service';
 
@@ -103,6 +104,15 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     logger.error({ err }, 'CRITICAL: failed to seed default premium plans — continuing without them');
+  }
+
+  // The staff panel's password door needs a users row behind its Telegram id, and
+  // without one every login fails looking exactly like a wrong password. Best-effort:
+  // a failure here must not stop the API from serving.
+  try {
+    await warnIfPanelAdminHasNoUser();
+  } catch (err) {
+    logger.warn({ err }, 'could not check whether the panel admin Telegram id has a user row');
   }
 
   const app = createApp();

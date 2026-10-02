@@ -147,3 +147,38 @@ describe('the configured Telegram id', () => {
     expect(fields).toMatchObject({ telegramId: '900000001' });
   });
 });
+
+describe('the boot-time warning', () => {
+  it('warns with the fix when the configured Telegram id has no user row', async () => {
+    prismaMod.prisma.user.findUnique.mockResolvedValue(null);
+
+    await svc.warnIfPanelAdminHasNoUser();
+
+    // The point is the deploy log: an operator who never sent /start to the bot gets
+    // told that here, instead of inferring it from a generic 401 at the login form.
+    expect(loggerMod.logger.warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = loggerMod.logger.warn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(message).toMatch(/no user row/i);
+    expect(message).toMatch(/\/start/);
+    expect(fields).toMatchObject({ telegramId: '900000001' });
+    // Nothing fatal: the deployment has to stay up so the operator can fix it.
+    expect(loggerMod.logger.error).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the row exists', async () => {
+    prismaMod.prisma.user.findUnique.mockResolvedValue({ id: 'usr_1' });
+
+    await svc.warnIfPanelAdminHasNoUser();
+
+    expect(loggerMod.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the database when the password door is not configured', async () => {
+    envMod.env.ADMIN_PANEL_PASSWORD_HASH = '';
+
+    await svc.warnIfPanelAdminHasNoUser();
+
+    expect(prismaMod.prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(loggerMod.logger.warn).not.toHaveBeenCalled();
+  });
+});

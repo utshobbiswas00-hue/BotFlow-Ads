@@ -28,7 +28,7 @@ import { ToastContainer } from '../../components/ui/Toast';
 import { showToast } from '../../store/uiStore';
 import { getAuthConfig, loginWithPassword } from '../lib/api';
 import { qk } from '../../lib/queryClient';
-import { isTelegram } from '../../lib/telegram';
+import { getInitData } from '../../lib/telegram';
 
 export function AdminLoginPage() {
   const navigate = useNavigate();
@@ -149,8 +149,14 @@ export function AdminLoginPage() {
             used to point back at this same page: "Continue with Telegram
             authentication" went to /admin, which bounced straight to the login screen
             again. Say what is true instead of offering a loop.
+
+            The test is `getInitData()`, NOT `isTelegram()`. The Telegram SDK script
+            always defines `window.Telegram.WebApp` — that is the whole point of it
+            working outside Telegram — so `isTelegram()` is true in any browser that
+            loaded the page, and the links stayed visible in exactly the case they were
+            meant to be hidden.
           */}
-          {isTelegram() ? (
+          {getInitData().length > 0 ? (
             <>
               <Link to="/" className="inline-flex items-center gap-1.5 text-link hover:underline">
                 <Icon name="back" size={13} />

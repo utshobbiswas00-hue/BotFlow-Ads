@@ -296,13 +296,13 @@ model User {
   /// Optional. Everything user-facing used to be Telegram-only, which makes an
   /// advertiser who blocks the bot unreachable — invoices and account recovery
   /// both need a channel that does not depend on Telegram.
-  email           String?   @unique
-  emailVerifiedAt DateTime? @map("email_verified_at")
+  email             String?   @unique
+  emailVerifiedAt   DateTime? @map("email_verified_at")
   /// Opt-out switch for non-transactional email (digests, product news).
   /// Transactional mail — invoices, security alerts — ignores this by design.
-  emailOptIn      Boolean   @default(true) @map("email_opt_in")
+  emailOptIn        Boolean   @default(true) @map("email_opt_in")
   /// Single-use token for the verification link.
-  emailVerifyToken String?  @map("email_verify_token")
+  emailVerifyToken  String?   @map("email_verify_token")
   emailVerifySentAt DateTime? @map("email_verify_sent_at")
 
   referralCode String  @unique @map("referral_code")
@@ -317,25 +317,27 @@ model User {
   totalWithdrawnCents Int @default(0) @map("total_withdrawn_cents")
   totalDepositedCents Int @default(0) @map("total_deposited_cents")
 
-  adminUser        AdminUser?
-  wallet           Wallet?
-  channels         Channel[]
-  campaigns        Campaign[]
-  adPosts          AdPost[]           @relation("AdPostPublisher")
-  transactions     Transaction[]
-  deposits         Deposit[]
-  withdrawals      Withdrawal[]
-  earnings         PublisherEarning[]
-  sentReferrals    Referral[]         @relation("Referrer")
-  receivedReferral Referral?          @relation("Referred")
-  notifications    Notification[]
-  tickets          SupportTicket[]    @relation("TicketOwner")
-  ticketMessages   TicketMessage[]
-  reports          Report[]
-  fraudEvents      FraudEvent[]
-  auditLogs        AuditLog[]
-  clicks           Click[]
-  subscriptions    Subscription[]
+  adminUser           AdminUser?
+  wallet              Wallet?
+  channels            Channel[]
+  campaigns           Campaign[]
+  adPosts             AdPost[]             @relation("AdPostPublisher")
+  transactions        Transaction[]
+  deposits            Deposit[]
+  withdrawals         Withdrawal[]
+  earnings            PublisherEarning[]
+  sentReferrals       Referral[]           @relation("Referrer")
+  receivedReferral    Referral?            @relation("Referred")
+  notifications       Notification[]
+  tickets             SupportTicket[]      @relation("TicketOwner")
+  ticketMessages      TicketMessage[]
+  reports             Report[]
+  /// Per-recipient rows for admin broadcasts (see BroadcastRecipient).
+  broadcastRecipients BroadcastRecipient[]
+  fraudEvents         FraudEvent[]
+  auditLogs           AuditLog[]
+  clicks              Click[]
+  subscriptions       Subscription[]
 
   /// Advertiser programmatic access. Both are revoked, never deleted, so an
   /// audit trail of what could reach the API survives revocation.
@@ -344,10 +346,10 @@ model User {
 
   /// Billing. An advertiser who spends money here must be able to get a
   /// document out of the platform for their accountant.
-  invoices         Invoice[]
+  invoices Invoice[]
 
   /// Sign-in history, used to decide whether a login is from a known device.
-  loginEvents      LoginEvent[]
+  loginEvents LoginEvent[]
 
   /// Premium membership. Denormalised from the active Subscription row so an
   /// entitlement check never needs a join on the hot path.
@@ -378,9 +380,50 @@ model AdminUser {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
+  // Staff alerts addressed to this admin role (see AdminNotification).
+  notifications AdminNotification[]
+
   @@index([role])
   @@index([isActive])
   @@map("admin_users")
+}
+
+// Staff alerts, addressed to the admin ROLE rather than to the person.
+//
+// Why this is separate from `Notification`, which holds the same message fields:
+//
+//  * Lifecycle. `Notification` is a user's inbox; deleting a user cascades it
+//    away. An ops alert is evidence about the platform — duplicate charges, a
+//    blocked deposit, a fraud signal. Keying it to the admin row and hanging it
+//    off `AdminUser` means removing a person does not erase the history.
+//  * Audience. Keyed on `AdminUser.id`, so it reaches the admin ROLE. The same
+//    human's personal inbox stays free of ops noise, and revoking admin rights
+//    implicitly stops delivery without touching a single row.
+//  * Write path. `alertAdmins()` is the only producer, and it must fan out to
+//    every ACTIVE admin — a query over `Notification.userId` would have to join
+//    back to `AdminUser` anyway to answer "who is an active admin right now".
+//
+// `NotificationType` is reused rather than duplicated so there is one list of
+// alert kinds and the UI needs no second label table.
+model AdminNotification {
+  id      String    @id @default(cuid())
+  adminId String    @map("admin_id")
+  admin   AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  type  NotificationType
+  title String
+  body  String
+  data  Json?
+  link  String?
+
+  isRead Boolean   @default(false) @map("is_read")
+  readAt DateTime? @map("read_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([adminId, isRead])
+  @@index([createdAt])
+  @@map("admin_notifications")
 }
 
 // ============================================================
@@ -493,38 +536,38 @@ enum CryptoTransferStatus {
 
 /// One incoming on-chain transfer, and what we decided to do about it.
 model CryptoChainTransfer {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   /// One of CRYPTO_NETWORKS (shared/src/enums.ts).
   network     String
   /// The chain's transaction hash. Unique per network with it.
-  txHash      String   @map("tx_hash")
+  txHash      String @map("tx_hash")
   /// The asset as the chain identified it — a token contract address on the EVM
   /// chains, the native symbol where there is none.
   asset       String
-  fromAddress String   @map("from_address")
-  toAddress   String   @map("to_address")
+  fromAddress String @map("from_address")
+  toAddress   String @map("to_address")
 
   /// The amount in the asset's SMALLEST unit, as a STRING.
   ///
   /// Never a number: an 18-decimal token exceeds what a JS float can hold
   /// exactly, so a numeric column would silently round somebody's money.
-  amountRaw   String   @map("amount_raw")
+  amountRaw String @map("amount_raw")
 
   /// The price used, frozen at observation time.
-  priceUsdCents Int?   @map("price_usd_cents")
+  priceUsdCents Int? @map("price_usd_cents")
   /// `amountRaw` converted to USD cents at that price. Null when no price could
   /// be obtained — an unpriced transfer is held rather than credited at a guess.
-  amountCents   Int?   @map("amount_cents")
+  amountCents   Int? @map("amount_cents")
 
-  blockNumber   BigInt?  @map("block_number")
-  confirmations Int      @default(0)
+  blockNumber   BigInt? @map("block_number")
+  confirmations Int     @default(0)
 
   status CryptoTransferStatus @default(DETECTED)
 
   /// The deposit this became. Unique, so one transfer can only ever be credited
   /// into one deposit, however many times the credit path runs.
-  depositId  String?  @unique @map("deposit_id")
-  note       String?
+  depositId String? @unique @map("deposit_id")
+  note      String?
 
   observedAt DateTime  @default(now()) @map("observed_at")
   creditedAt DateTime? @map("credited_at")
@@ -725,7 +768,7 @@ model Channel {
   /// Publisher-set floor. An advertiser whose offer is below this can never
   /// create a campaign against this channel.
   minAdPriceCents     Int                 @default(0) @map("min_ad_price_cents")
-maxCampaignsPerHour Int? @map("max_campaigns_per_hour")
+  maxCampaignsPerHour Int?                @map("max_campaigns_per_hour")
   healthStatus        ChannelHealthStatus @default(HEALTHY) @map("health_status")
   /// 0-100, written by the channel-health refresh job. Advertisers see this as a
   /// quality signal; it is deliberately separate from `status`, which is the
@@ -931,7 +974,7 @@ model DeliveryJob {
   /// with frequencyPerChannel = 3 must produce 3 jobs even when it has a single
   /// creative, so the uniqueness key includes this counter — otherwise
   /// createMany({ skipDuplicates: true }) silently collapses them into one.
-  seq        Int      @default(0) @map("seq")
+  seq Int @default(0) @map("seq")
 
   status      DeliveryJobStatus @default(PENDING)
   attempts    Int               @default(0)
@@ -1426,12 +1469,12 @@ model BlockedDomain {
 /// sane integrator, and a double-counted conversion inflates an advertiser's
 /// reported performance — the same class of bug as a double-charged delivery.
 model ConversionEvent {
-  id         String  @id @default(cuid())
-  clickId    String? @map("click_id")
-  adId       String? @map("ad_id")
-  adPostId   String? @map("ad_post_id")
-  campaignId String? @map("campaign_id")
-  channelId  String? @map("channel_id")
+  id           String  @id @default(cuid())
+  clickId      String? @map("click_id")
+  adId         String? @map("ad_id")
+  adPostId     String? @map("ad_post_id")
+  campaignId   String? @map("campaign_id")
+  channelId    String? @map("channel_id")
   /// The advertiser who owns the campaign this conversion is attributed to.
   advertiserId String? @map("advertiser_id")
 
@@ -1441,10 +1484,10 @@ model ConversionEvent {
   apiKey   AdvertiserApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
 
   /// 'postback' | 'pixel' | 'manual'. Free text so new sources need no migration.
-  source    String?
-  eventName String? @map("event_name")
-  valueCents Int?   @map("value_cents")
-  currency   String @default("USD")
+  source     String?
+  eventName  String?  @map("event_name")
+  valueCents Int?     @map("value_cents")
+  currency   String   @default("USD")
   /// Raw payload from the conversion source, kept for audit.
   payload    Json?
   occurredAt DateTime @default(now()) @map("occurred_at")
@@ -1663,10 +1706,10 @@ model AdvertiserApiKey {
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  label  String
+  label   String
   /// First 12 characters of the key, shown in the UI so a user can tell two
   /// credentials apart. Safe to display: it is not enough to authenticate with.
-  prefix String @unique
+  prefix  String @unique
   /// SHA-256 of the full key. Unique so the same secret cannot be issued twice.
   keyHash String @unique @map("key_hash")
 
@@ -1843,7 +1886,7 @@ model LoginEvent {
   country       String?
 
   /// True when this (user, ip) pair had never been seen before.
-  isNewDevice Boolean @default(false) @map("is_new_device")
+  isNewDevice Boolean   @default(false) @map("is_new_device")
   /// Set once we have decided not to alert again about this device.
   alertedAt   DateTime? @map("alerted_at")
 
@@ -1852,4 +1895,102 @@ model LoginEvent {
   @@index([userId, createdAt])
   @@index([userId, ipHash])
   @@map("login_events")
+}
+
+// Broadcast delivery tracking
+//
+// Why a dedicated pair of tables instead of leaning on `Notification`:
+// before this, a broadcast left NO record of itself. Each recipient got a
+// `Notification` row with a `delivered` boolean and a `sentAt`, which answers
+// "was it sent?" but cannot answer "which broadcast was this?", "what did
+// Telegram say when it failed?", or "what was the message id?". It also meant a
+// user clearing their inbox would erase delivery history.
+//
+// So: `BroadcastJob` is the broadcast, `BroadcastRecipient` is one delivery
+// attempt to one user. The `Notification` row is still written, because the user
+// should still see the message in their inbox — the two records answer different
+// questions and are allowed to disagree (a notification can exist while the
+// Telegram push failed).
+
+/// One admin-initiated broadcast.
+model BroadcastJob {
+  id       String             @id @default(cuid())
+  status   BroadcastJobStatus @default(QUEUED)
+  audience BroadcastAudience
+
+  title String
+  body  String
+
+  /// Size of the recipient set frozen at enqueue time. The set itself is
+  /// materialised into BroadcastRecipient rows, so this stays as a record of
+  /// what was intended even if rows are pruned later.
+  totalRecipients Int @default(0) @map("total_recipients")
+
+  /// Counters maintained as recipients are processed. Denormalised on purpose:
+  /// the history list is the most-read screen here, and an aggregate per row
+  /// would make it O(jobs) group-bys.
+  sentCount   Int @default(0) @map("sent_count")
+  failedCount Int @default(0) @map("failed_count")
+
+  /// AdminUser id of the sender. Deliberately a plain column, not a relation —
+  /// the trail matters, but deleting an admin must not cascade a broadcast away.
+  createdById String? @map("created_by_id")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  recipients BroadcastRecipient[]
+
+  @@index([createdAt])
+  @@index([status])
+  @@map("broadcast_jobs")
+}
+
+/// One recipient's delivery state within one broadcast.
+model BroadcastRecipient {
+  id    String       @id @default(cuid())
+  jobId String       @map("job_id")
+  job   BroadcastJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status BroadcastRecipientStatus @default(PENDING)
+
+  /// Telegram's message id once sent. BigInt: Telegram ids exceed 32 bits.
+  telegramMessageId BigInt?   @map("telegram_message_id")
+  /// Telegram's error description, or our own reason when we skipped the send.
+  error             String?
+  sentAt            DateTime? @map("sent_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// One row per recipient per broadcast — makes a double-send of the same
+  /// broadcast impossible at the database level, not just in application code.
+  @@unique([jobId, userId])
+  @@index([jobId, status])
+  @@index([userId, createdAt])
+  @@map("broadcast_recipients")
+}
+
+enum BroadcastJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  /// Finished with at least one unrecoverable failure at the job level.
+  FAILED
+}
+
+enum BroadcastAudience {
+  ALL
+  PUBLISHERS
+  ADVERTISERS
+}
+
+enum BroadcastRecipientStatus {
+  PENDING
+  SENT
+  FAILED
+  /// Not attempted — the recipient was gone or blocked the bot by then.
+  SKIPPED
 }

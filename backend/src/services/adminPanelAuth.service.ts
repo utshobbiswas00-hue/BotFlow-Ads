@@ -75,6 +75,19 @@ export async function loginWithPassword(username: string, password: string): Pro
   // and a secret. The strength of the secret is the operator's call, but its
   // presence is not optional.
   if (!username || username.length < 3 || !password || password.length < 8) {
+    // Logged, though the caller learns nothing. This path used to be silent, which
+    // made it the worst kind of misconfiguration: a correct username and a correct
+    // hash with a 7-character password produced "Invalid username or password", no
+    // log line anywhere, and nothing to search for. Lengths only — never the values.
+    logger.warn(
+      {
+        username,
+        usernameLength: username.length,
+        passwordLength: password.length,
+        minimums: { username: 3, password: 8 },
+      },
+      'admin panel login rejected: below the minimum credential length',
+    );
     throw new UnauthorizedError('Invalid username or password');
   }
 
@@ -84,7 +97,22 @@ export async function loginWithPassword(username: string, password: string): Pro
   // Both checks always run (no short-circuit) so the response time does not
   // reveal which half was wrong.
   if (!usernameOk || !passwordOk) {
-    logger.warn({ username, ip: 'route-logged' }, 'admin panel login rejected: bad credentials');
+    // The comment above promises the log says which half failed, and the operator
+    // needs exactly that: "bad credentials" alone cannot distinguish a typo from a
+    // hash that was truncated when it was pasted into a dashboard field. Booleans and
+    // lengths only — the password and the hash are never logged.
+    logger.warn(
+      {
+        username,
+        usernameMatch: usernameOk,
+        passwordMatch: passwordOk,
+        configuredUsernameLength: env.ADMIN_PANEL_USERNAME.length,
+        configuredHashLength: env.ADMIN_PANEL_PASSWORD_HASH.length,
+        configuredHashIsScrypt: env.ADMIN_PANEL_PASSWORD_HASH.startsWith('scrypt$'),
+        ip: 'route-logged',
+      },
+      'admin panel login rejected: bad credentials',
+    );
     throw new UnauthorizedError('Invalid username or password');
   }
 

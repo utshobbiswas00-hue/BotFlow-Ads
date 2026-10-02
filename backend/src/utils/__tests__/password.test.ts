@@ -12,29 +12,29 @@ import { hashPassword, safeEqual, verifyPassword } from '../password';
  */
 describe('hashPassword / verifyPassword', () => {
   it('round-trips the correct password', () => {
-    const stored = hashPassword('Admin123');
-    expect(verifyPassword('Admin123', stored)).toBe(true);
+    const stored = hashPassword('a-test-password');
+    expect(verifyPassword('a-test-password', stored)).toBe(true);
   });
 
   it('rejects a wrong password', () => {
-    const stored = hashPassword('Admin123');
+    const stored = hashPassword('a-test-password');
     expect(verifyPassword('Admin124', stored)).toBe(false);
     expect(verifyPassword('admin123', stored)).toBe(false);
-    expect(verifyPassword('Admin123 ', stored)).toBe(false);
+    expect(verifyPassword('a-test-password ', stored)).toBe(false);
     expect(verifyPassword('', stored)).toBe(false);
   });
 
   it('produces a different hash every time (random salt)', () => {
-    const a = hashPassword('Admin123');
-    const b = hashPassword('Admin123');
+    const a = hashPassword('a-test-password');
+    const b = hashPassword('a-test-password');
     expect(a).not.toBe(b);
     // …and both still verify, which is the point of storing the salt inline.
-    expect(verifyPassword('Admin123', a)).toBe(true);
-    expect(verifyPassword('Admin123', b)).toBe(true);
+    expect(verifyPassword('a-test-password', a)).toBe(true);
+    expect(verifyPassword('a-test-password', b)).toBe(true);
   });
 
   it('stores the parameters alongside the digest so they can be raised later', () => {
-    const stored = hashPassword('Admin123');
+    const stored = hashPassword('a-test-password');
     const [scheme, n, r, p, salt, key] = stored.split('$');
     expect(scheme).toBe('scrypt');
     expect(n).toBe('16384');
@@ -45,7 +45,7 @@ describe('hashPassword / verifyPassword', () => {
   });
 
   it('never embeds the plaintext', () => {
-    expect(hashPassword('Admin123')).not.toContain('Admin123');
+    expect(hashPassword('a-test-password')).not.toContain('a-test-password');
   });
 
   it('refuses to hash an empty password', () => {
@@ -63,10 +63,10 @@ describe('hashPassword / verifyPassword', () => {
       'bcrypt$16384$8$1$aabb$ccdd', // wrong scheme
       'scrypt$abc$8$1$aabb$ccdd', // non-numeric cost
       'scrypt$16384$8$1$zz$zz', // non-hex
-      'Admin123', // a plaintext password left in the config
+      'a-test-password', // a plaintext password left in the config
     ];
     for (const stored of bad) {
-      expect(verifyPassword('Admin123', stored)).toBe(false);
+      expect(verifyPassword('a-test-password', stored)).toBe(false);
     }
   });
 });

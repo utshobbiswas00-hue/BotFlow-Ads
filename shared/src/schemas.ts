@@ -203,7 +203,11 @@ export const adminChannelActionSchema = z.object({
   // the webhook was misconfigured while the bot was added: the channel then looks exactly
   // like "the bot is not an admin", APPROVE is refused, and there was no way to re-ask.
   // See adminChannelAction and channel.service.ts:verifyChannel.
-  action: z.enum(['APPROVE', 'REJECT', 'SUSPEND', 'REACTIVATE', 'VERIFY']),
+  // APPROVE_ANYWAY is APPROVE with the one precondition the operator is deliberately
+  // overriding: that the bot can actually post in the channel. Kept separate so an
+  // approval made with the rights and one made without them do not look identical in the
+  // audit log. Requires a reason.
+  action: z.enum(['APPROVE', 'REJECT', 'SUSPEND', 'REACTIVATE', 'VERIFY', 'APPROVE_ANYWAY']),
   note: z.string().max(500).optional().nullable(),
 });
 

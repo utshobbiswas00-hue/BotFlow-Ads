@@ -27,6 +27,7 @@ import { ListFilters, dateRangeParams } from '../components/ListFilters';
 import {
   CHANNEL_STATUSES,
   channelActionsFor,
+  channelApproveAnywayOffered,
   channelApproveBlockedReason,
   channelNeedsRightsRecheck,
   statusOptions,
@@ -47,6 +48,7 @@ const ACTION_LABELS: Record<string, string> = {
   SUSPEND: 'Suspend',
   REACTIVATE: 'Reactivate',
   VERIFY: 'Re-check rights',
+  APPROVE_ANYWAY: 'Approve anyway',
 };
 
 export function AdminChannelsPage() {
@@ -248,6 +250,35 @@ export function AdminChannelsPage() {
             ],
             run: (values) => channelAction(c.id, 'VERIFY', values.note),
             successMessage: 'Rights refreshed',
+          });
+        }
+
+        // The operator's override, offered exactly where APPROVE is refused and the
+        // channel is still waiting for review. The backend keeps it a distinct action so
+        // the audit log can tell a normal approval from this one, and it refuses to run
+        // without a reason.
+        if (channelApproveAnywayOffered(c)) {
+          actions.push({
+            key: 'APPROVE_ANYWAY',
+            label: ACTION_LABELS.APPROVE_ANYWAY,
+            danger: true,
+            confirmTitle: 'Approve without confirming the bot can post?',
+            confirmDescription:
+              blockedReason +
+              ' Approving anyway puts this channel in front of advertisers, and posts bought ' +
+              'on it will fail until the bot can post.',
+            fields: [
+              {
+                name: 'note',
+                label: 'Reason (required)',
+                type: 'textarea',
+                required: true,
+                hint: 'Stored on the channel and in the audit log.',
+                maxLength: 500,
+              },
+            ],
+            run: (values) => channelAction(c.id, 'APPROVE_ANYWAY', values.note),
+            successMessage: 'Channel approved',
           });
         }
 

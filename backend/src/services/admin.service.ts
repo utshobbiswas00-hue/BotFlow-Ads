@@ -798,7 +798,13 @@ export async function adminCampaignAction(
  *  Channel actions
  * ------------------------------------------------------------------ */
 
-export type AdminChannelAction = 'APPROVE' | 'REJECT' | 'SUSPEND' | 'REACTIVATE' | 'VERIFY';
+export type AdminChannelAction =
+  | 'APPROVE'
+  | 'REJECT'
+  | 'SUSPEND'
+  | 'REACTIVATE'
+  | 'VERIFY'
+  | 'APPROVE_ANYWAY';
 
 export interface AdminChannelActionInput {
   channelId: string;
@@ -867,6 +873,47 @@ export async function adminChannelAction(
         type: 'CHANNEL_APPROVED',
         title: 'Channel approved',
         body: `Your channel "${channel.title}" has been approved. Advertisers can now buy posts on it.`,
+        data: { channelId },
+        link: '/publisher/channels',
+      });
+      break;
+    }
+
+    case 'APPROVE_ANYWAY': {
+      // The same transition as APPROVE, minus the one precondition the operator is
+      // deliberately overriding.
+      //
+      // It exists because the rights snapshot can simply be wrong: it is written by
+      // Telegram's `my_chat_member` push, which never arrives while the webhook is
+      // misconfigured — so a channel whose bot is perfectly able to post can sit PENDING
+      // forever. The operator can look at the channel; the snapshot cannot.
+      //
+      // A separate action rather than a relaxed APPROVE, so that the difference survives
+      // in the audit log: an approval made with the rights and one made without them must
+      // not be indistinguishable afterwards.
+      if (!note || note.trim().length < 3) {
+        throw new ValidationError(
+          'Approving without the bot being an administrator needs a reason. It is stored ' +
+            'on the channel and in the audit log, and it is the only record that this ' +
+            'channel was approved without post rights.',
+        );
+      }
+      await prisma.channel.update({
+        where: { id: channelId },
+        data: {
+          status: 'APPROVED',
+          approvedAt: new Date(),
+          rejectionReason: null,
+          adminNote: note.trim(),
+        },
+      });
+      // Deliberately no "advertisers can now buy posts" here: with the bot unable to post
+      // that promise may not hold yet, and the owner is the one who would act on it.
+      await createNotification({
+        userId: channel.ownerId,
+        type: 'CHANNEL_APPROVED',
+        title: 'Channel approved',
+        body: `Your channel "${channel.title}" has been approved by an administrator.`,
         data: { channelId },
         link: '/publisher/channels',
       });

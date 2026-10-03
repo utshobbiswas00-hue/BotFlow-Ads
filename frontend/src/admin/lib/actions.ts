@@ -116,6 +116,9 @@ const CHANNEL_ACTIONS: Record<ChannelAction, readonly string[]> = {
   // channelNeedsRightsRecheck() is true, so listing statuses here would show it on rows
   // that do not need it — and twice on the rows that do.
   VERIFY: [],
+  // Page-driven too, and only where APPROVE is refused: it is the operator's override of
+  // that refusal, so it has to appear exactly where the refusal does, not wider.
+  APPROVE_ANYWAY: [],
 };
 
 export function channelActionsFor(status: string): ChannelAction[] {
@@ -130,6 +133,22 @@ export function channelNeedsRightsRecheck(channel: {
   canPostMessages: boolean;
 }): boolean {
   return !(channel.botIsAdmin && channel.canPostMessages);
+}
+
+/**
+ * Whether the operator should be offered the override.
+ *
+ * Exactly where APPROVE is refused *and* the channel is still waiting for review: the
+ * override exists to act on THAT refusal, so offering it anywhere else would be offering
+ * an action with no refusal to override. Kept as a helper rather than a condition inside
+ * the page so the rule can be asserted.
+ */
+export function channelApproveAnywayOffered(channel: {
+  botIsAdmin: boolean;
+  canPostMessages: boolean;
+  status: string;
+}): boolean {
+  return channelNeedsRightsRecheck(channel) && channel.status === 'PENDING';
 }
 
 export function channelApproveBlockedReason(channel: {

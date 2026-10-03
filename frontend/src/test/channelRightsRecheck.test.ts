@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   channelActionsFor,
+  channelApproveAnywayOffered,
   channelApproveBlockedReason,
   channelNeedsRightsRecheck,
 } from '../admin/lib/actions';
@@ -66,8 +67,33 @@ describe('VERIFY is not status-driven', () => {
     }
   });
 
+  it('does not offer the override by status alone either', () => {
+    for (const status of ['PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED']) {
+      expect(channelActionsFor(status)).not.toContain('APPROVE_ANYWAY');
+    }
+  });
+
   it('still returns the actions that are status-driven', () => {
     expect(channelActionsFor('PENDING')).toEqual(expect.arrayContaining(['APPROVE', 'REJECT', 'SUSPEND']));
     expect(channelActionsFor('APPROVED')).toEqual(expect.arrayContaining(['SUSPEND']));
+  });
+});
+
+describe('the operator override', () => {
+  it('is offered where APPROVE is refused and the channel is waiting for review', () => {
+    expect(channelApproveAnywayOffered({ ...notAdmin, status: 'PENDING' })).toBe(true);
+    expect(channelApproveAnywayOffered({ ...cannotPost, status: 'PENDING' })).toBe(true);
+  });
+
+  it('is not offered when the bot can post, because there is no refusal to override', () => {
+    expect(channelApproveAnywayOffered({ ...ready, status: 'PENDING' })).toBe(false);
+  });
+
+  it('is not offered for a channel that is not waiting for review', () => {
+    // A suspended or rejected channel is dealt with by REACTIVATE, not by approving over
+    // the top of a decision somebody already made.
+    for (const status of ['APPROVED', 'REJECTED', 'SUSPENDED', 'INACTIVE']) {
+      expect(channelApproveAnywayOffered({ ...notAdmin, status })).toBe(false);
+    }
   });
 });

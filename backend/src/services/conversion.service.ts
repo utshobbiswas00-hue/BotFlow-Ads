@@ -55,18 +55,42 @@ export interface ConversionStatsRange {
   to?: Date;
 }
 
+export interface CurrencyConversionStats {
+  currency: string;
+  conversions: number;
+  valueCents: number;
+}
+
 export interface CampaignConversionStats {
   campaignId: string;
   campaignName: string | null;
   conversions: number;
-  valueCents: number;
+  /**
+   * Sum only when this campaign's conversions all share one currency; `null` when they do
+   * not. `cents` of two currencies are not additive, so a number here for a mixed campaign
+   * would be a total of nothing.
+   */
+  valueCents: number | null;
+  /** The single currency, or `null` when the campaign mixes more than one. */
+  currency: string | null;
+  /** Every currency this campaign reported, never summed together. */
+  byCurrency: CurrencyConversionStats[];
 }
 
 export interface ConversionStats {
   /** Total stored, attributed conversions for the advertiser (in range). */
   conversions: number;
-  /** Sum of valueCents across those conversions (each in its own currency). */
-  totalValueCents: number;
+  /**
+   * Sum only while every conversion in range is in the same currency; `null` once more
+   * than one appears. This field used to add USD cents to EUR cents to BDT cents and
+   * present the result as a monetary total — it is `null` rather than wrong, and
+   * `byCurrency` carries the figures that can be added up.
+   */
+  totalValueCents: number | null;
+  /** The single currency, or `null` when more than one appears in range. */
+  currency: string | null;
+  /** Per-currency totals — the only figures that are ever additive. */
+  byCurrency: CurrencyConversionStats[];
   byCampaign: CampaignConversionStats[];
 }
 
@@ -146,18 +170,26 @@ async function attribute(input: ConversionInput, ctx: ConversionContext): Promis
     throw new ValidationError(NOT_OUR_AD);
   }
 
-  // Enrich from the most recent click on this ad by this user, when present.
-  const lastClick = await prisma.click.findFirst({
-    where: { adId: ad.id, userId: ctx.advertiserId },
-    orderBy: { createdAt: 'desc' },
-  });
-
+  // Attribute only what the slug proves: the ad and its campaign.
+  //
+  // There used to be a lookup here for "the most recent click on this ad by this user",
+  // filtered on `userId: ctx.advertiserId`. Those two ids are different people by
+  // definition — `ctx.advertiserId` is the API key's owner, while `Click.userId` is the
+  // Telegram user who tapped the ad link in a channel — so the filter could only ever
+  // match if the advertiser clicked their own ad. In practice it returned null on every
+  // real conversion, and the post and channel were silently dropped from the row while
+  // the code read as though it had found them.
+  //
+  // A slug carries no clicker identity, so there is nothing here to guess with: the
+  // click-derived fields stay null and the caller sends the `clickId` from its landing
+  // page when it wants per-click, per-post and per-channel attribution. That path is the
+  // one above, and it is verified against the campaign's owner.
   return {
-    clickId: lastClick?.id ?? null,
+    clickId: null,
     adId: ad.id,
-    adPostId: lastClick?.adPostId ?? null,
+    adPostId: null,
     campaignId: ad.campaignId,
-    channelId: lastClick?.channelId ?? null,
+    channelId: null,
     advertiserId: ctx.advertiserId,
   };
 }
@@ -281,16 +313,16 @@ export async function getConversionStats(
       : {}),
   };
 
-  const [total, sum, groups] = await Promise.all([
-    prisma.conversionEvent.count({ where }),
-    prisma.conversionEvent.aggregate({ where, _sum: { valueCents: true } }),
-    prisma.conversionEvent.groupBy({
-      by: ['campaignId'],
-      where,
-      _count: { _all: true },
-      _sum: { valueCents: true },
-    }),
-  ]);
+  // Grouped by currency as well as campaign, so nothing is ever summed across currencies.
+  // `ConversionEvent.currency` is written per event (the ingest schema defaults it to USD),
+  // which means a single advertiser — or a single campaign — can legitimately hold more
+  // than one.
+  const groups = await prisma.conversionEvent.groupBy({
+    by: ['campaignId', 'currency'],
+    where,
+    _count: { _all: true },
+    _sum: { valueCents: true },
+  });
 
   const campaignIds = groups.map((g) => g.campaignId).filter((id): id is string => Boolean(id));
   const campaigns = await prisma.campaign.findMany({
@@ -299,19 +331,79 @@ export async function getConversionStats(
   });
   const nameById = new Map(campaigns.map((c) => [c.id, c.name]));
 
-  const byCampaign: CampaignConversionStats[] = groups
-    .filter((g) => g.campaignId !== null)
-    .map((g) => ({
-      campaignId: g.campaignId as string,
-      campaignName: nameById.get(g.campaignId as string) ?? null,
-      conversions: g._count._all,
-      valueCents: g._sum.valueCents ?? 0,
-    }))
-    .sort((a, b) => b.conversions - a.conversions || b.valueCents - a.valueCents);
+  /** Fold a set of (currency, count, sum) rows into a per-currency list. */
+  const foldCurrencies = (
+    rows: { currency: string; count: number; sum: number }[],
+  ): CurrencyConversionStats[] => {
+    const byCurrency = new Map<string, CurrencyConversionStats>();
+    for (const row of rows) {
+      const entry = byCurrency.get(row.currency) ?? {
+        currency: row.currency,
+        conversions: 0,
+        valueCents: 0,
+      };
+      entry.conversions += row.count;
+      entry.valueCents += row.sum;
+      byCurrency.set(row.currency, entry);
+    }
+    // Ordered by value, then by currency: equal totals are common (a test fixture, or a
+    // fresh account), and a response whose order depends on Map insertion would differ
+    // between two identical requests.
+    return [...byCurrency.values()].sort(
+      (a, b) => b.valueCents - a.valueCents || a.currency.localeCompare(b.currency),
+    );
+  };
+
+  const overall = foldCurrencies(
+    groups.map((g) => ({
+      currency: g.currency,
+      count: g._count._all,
+      sum: g._sum.valueCents ?? 0,
+    })),
+  );
+
+  const byCampaignId = new Map<string, { currency: string; count: number; sum: number }[]>();
+  for (const g of groups) {
+    if (g.campaignId === null) continue;
+    const list = byCampaignId.get(g.campaignId) ?? [];
+    list.push({ currency: g.currency, count: g._count._all, sum: g._sum.valueCents ?? 0 });
+    byCampaignId.set(g.campaignId, list);
+  }
+
+  const byCampaign: CampaignConversionStats[] = [...byCampaignId.entries()]
+    .map(([campaignId, rows]) => {
+      const byCurrency = foldCurrencies(rows);
+      const single = byCurrency.length === 1 ? byCurrency[0] : undefined;
+      return {
+        campaignId,
+        campaignName: nameById.get(campaignId) ?? null,
+        conversions: rows.reduce((n, r) => n + r.count, 0),
+        // One currency for the whole campaign is the only case where a single figure
+        // means anything.
+        valueCents: single ? single.valueCents : null,
+        currency: single ? single.currency : null,
+        byCurrency,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.conversions - a.conversions ||
+        (b.valueCents ?? 0) - (a.valueCents ?? 0) ||
+        a.campaignId.localeCompare(b.campaignId),
+    );
+
+  const singleOverall = byCurrencySingleton(overall);
 
   return {
-    conversions: total,
-    totalValueCents: sum._sum.valueCents ?? 0,
+    conversions: overall.reduce((n, c) => n + c.conversions, 0),
+    totalValueCents: singleOverall ? singleOverall.valueCents : null,
+    currency: singleOverall ? singleOverall.currency : null,
+    byCurrency: overall,
     byCampaign,
   };
+}
+
+/** The one entry, when there is exactly one; otherwise undefined. */
+function byCurrencySingleton(rows: CurrencyConversionStats[]): CurrencyConversionStats | undefined {
+  return rows.length === 1 ? rows[0] : undefined;
 }

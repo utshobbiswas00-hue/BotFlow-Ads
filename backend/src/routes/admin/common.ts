@@ -13,11 +13,35 @@ import { ForbiddenError } from '../../utils/errors';
 export const idParams = z.object({ id: z.string().min(1) });
 
 /**
- * The acting admin's id. `requireAdmin` is applied at the router level in
- * index.ts, so `req.admin` is always present here — the guard only exists
- * for type-level safety.
+ * The acting admin's **User** id.
+ *
+ * Every audit field needs THIS id and not the `AdminUser.id`: `AuditLog.actorId`
+ * and `TicketMessage.senderId` both reference `User`, so an `AdminUser.id` written
+ * into them raises a foreign-key violation. `recordAudit` swallows that error on
+ * purpose — an audit write must never fail the action it describes — which is what
+ * turned the mistake into a silent one: the action succeeded and its audit row
+ * simply never appeared.
+ *
+ * `AdminUser.userId` is unique, so the acting admin stays unambiguous. Reach for
+ * `adminRecordId` only where a genuinely AdminUser-scoped id is required (scoping
+ * an AdminNotification to its owner, the self-deactivation guard).
+ *
+ * `requireAdmin` is applied at the router level in index.ts, so `req.user` is
+ * always present here — the guard exists for type-level safety.
  */
-export function adminId(req: Request): string {
+export function adminUserId(req: Request): string {
+  const user = req.user;
+  if (!user) throw new ForbiddenError('Admin access required');
+  return user.id;
+}
+
+/**
+ * The acting admin's `AdminUser` row id.
+ *
+ * Deliberately separate from `adminUserId`: the two ids differ, and a field that
+ * references `User` must never receive this one.
+ */
+export function adminRecordId(req: Request): string {
   const admin = req.admin;
   if (!admin) throw new ForbiddenError('Admin access required');
   return admin.id;

@@ -266,6 +266,10 @@ enum DeliveryErrorCode {
   BUDGET_EXHAUSTED
   CHANNEL_SUSPENDED
   PUBLISHER_REJECTED
+  // A policy check that guards the post (the channel blocklist, the URL checker) could
+  // not be evaluated. Retryable: the check is expected to answer again shortly, and the
+  // ad must not be published while an answer is unavailable.
+  POLICY_CHECK_UNAVAILABLE
   UNKNOWN
 }
 

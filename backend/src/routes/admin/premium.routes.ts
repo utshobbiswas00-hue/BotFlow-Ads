@@ -4,7 +4,7 @@ import { validate } from '../../middleware/validate';
 import { requirePermission } from '../../middleware/adminAuth';
 import { getPlanByCode, listPlans, setPlanActive, upsertPlan } from '../../services/premium.service';
 import { recordAudit } from '../../services/audit.service';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 
 export const planPremiumRouter = Router();
 
@@ -81,7 +81,7 @@ planPremiumRouter.post(
       const { id } = await upsertPlan(body);
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         action: 'PREMIUM_PLAN_UPSERTED',
         targetType: 'SUBSCRIPTION_PLAN',
         targetId: id,
@@ -113,7 +113,7 @@ planPremiumRouter.patch(
       await setPlanActive(code, isActive);
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         action: isActive ? 'PREMIUM_PLAN_ENABLED' : 'PREMIUM_PLAN_DISABLED',
         targetType: 'SUBSCRIPTION_PLAN',
         targetId: code,

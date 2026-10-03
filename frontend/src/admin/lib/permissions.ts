@@ -42,6 +42,64 @@ export const ADMIN_PERMISSIONS = [
 
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
 
+/**
+ * Why this admin account must not be deactivated from here, or null when it can be.
+ *
+ * Mirrors `assertAdminAccessSurvives` on the server, which stays the authority: this only
+ * keeps the operator from pressing a button that is certain to be refused, and explains
+ * why. The two refusals are the ones that actually lock people out —
+ *
+ *   your own account, because you cannot undo it from a panel you no longer reach, and
+ *   the last active SUPER_ADMIN, because nobody would be left who can manage admins and
+ *   the only way back is a database write.
+ *
+ * Judged on the resulting state, like the server does: an account that is already inactive
+ * is not being deactivated again.
+ */
+export function adminDeactivationBlockedReason(
+  target: { id: string; role: string; isActive: boolean },
+  me: { id: string } | null,
+  all: readonly { id: string; role: string; isActive: boolean }[],
+): string | null {
+  if (!target.isActive) return null;
+
+  if (me && target.id === me.id) {
+    return 'This is your own account. Deactivating it would remove your access, and another admin has to do it.';
+  }
+
+  if (target.role === 'SUPER_ADMIN') {
+    const otherSupers = all.filter(
+      (a) => a.id !== target.id && a.role === 'SUPER_ADMIN' && a.isActive,
+    ).length;
+    if (otherSupers === 0) {
+      return 'This is the only active SUPER_ADMIN. Deactivating it would lock everyone out of the panel, and the only way back is a database write.';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The same question for the edit dialog, where access can be lost by demotion as well as
+ * by deactivation.
+ */
+export function adminAccessChangeBlockedReason(
+  target: { id: string; role: string; isActive: boolean },
+  me: { id: string } | null,
+  all: readonly { id: string; role: string; isActive: boolean }[],
+): string | null {
+  const self = me && target.id === me.id;
+  const lastSuper =
+    target.role === 'SUPER_ADMIN' &&
+    target.isActive &&
+    all.filter((a) => a.id !== target.id && a.role === 'SUPER_ADMIN' && a.isActive).length === 0;
+
+  if (!self && !lastSuper) return null;
+
+  const who = self ? 'your own account' : 'the only active SUPER_ADMIN';
+  return `Careful: this is ${who}. Moving it off SUPER_ADMIN, or marking it inactive, would remove access the panel cannot restore by itself — the server refuses that change.`;
+}
+
 export const ADMIN_ROLES = [
   'SUPER_ADMIN',
   'ADMIN',

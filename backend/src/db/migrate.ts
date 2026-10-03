@@ -50,10 +50,25 @@ export function runMigrationsOnBoot(): void {
     return;
   }
 
-  // Do not crash: the API can still serve routes that do not touch the missing
-  // column. But say it loudly so the cause is obvious in the logs.
   logger.error(
     { status: result.status, output: output.slice(-2000) },
     'CRITICAL: prisma migrate deploy FAILED — the database schema is out of date',
   );
+
+  // In production this is fatal, and deliberately so.
+  //
+  // Continuing used to look reasonable — "the API can still serve routes that do not
+  // touch the missing column" — but nothing can distinguish those routes at boot, so
+  // the process came up, `/health` answered 200 (its probe is `SELECT 1`, which a
+  // schema-mismatched database passes happily), Render reported the deploy healthy,
+  // and the failure then surfaced as scattered P2021/P2022 500s on whichever routes
+  // happened to need a new column. A deploy that cannot migrate should fail as a
+  // deploy, not as a partial outage discovered later.
+  //
+  // Development keeps the old behaviour: a local schema experiment should not kill
+  // the dev server.
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('exiting: production boot requires a database schema that matches the code');
+    process.exit(1);
+  }
 }

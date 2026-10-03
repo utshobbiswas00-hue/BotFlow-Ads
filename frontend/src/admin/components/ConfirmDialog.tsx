@@ -23,7 +23,15 @@ export interface DialogField {
   /** Mirrors a server-side requirement — blocks submit, like the API would. */
   required?: boolean;
   maxLength?: number;
-  type?: 'text' | 'textarea' | 'number' | 'select';
+  type?: 'text' | 'textarea' | 'number' | 'select' | 'permissions';
+  /**
+   * For `type: 'permissions'`: the checkbox groups to render. The value travels as
+   * a comma-separated list of keys, so the dialog's `Record<string, string>`
+   * contract (and every other field type) is untouched.
+   */
+  groups?: { label: string; keys: readonly string[] }[];
+  /** Keys that are declared but wired to no screen — rendered as such, not hidden. */
+  unwired?: readonly string[];
   /**
    * Allowed values, for `type: 'select'`. Use it whenever the server validates
    * the value against an enum (`z.nativeEnum`) — a free-text box there is just a
@@ -117,6 +125,62 @@ export function ConfirmDialog({
           }
           if (f.type === 'textarea') {
             return <Textarea key={f.name} {...shared} rows={3} />;
+          }
+          if (f.type === 'permissions') {
+            const chosen = new Set(
+              value
+                .split(',')
+                .map((k) => k.trim())
+                .filter(Boolean),
+            );
+            const toggle = (key: string): void => {
+              const next = new Set(chosen);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              setValues((v) => ({ ...v, [f.name]: [...next].join(',') }));
+            };
+            const total = (f.groups ?? []).reduce((n, g) => n + g.keys.length, 0);
+            return (
+              <div key={f.name} className="space-y-2">
+                <div className="text-sm font-medium">{f.label}</div>
+                {f.hint ? <p className="text-xs text-mute">{f.hint}</p> : null}
+                <div className="space-y-3 rounded-lg border border-line p-3">
+                  {(f.groups ?? []).map((g) => (
+                    <div key={g.label}>
+                      <div className="text-xs font-medium text-mute">{g.label}</div>
+                      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
+                        {g.keys.map((k) => (
+                          <label key={k} className="inline-flex items-center gap-1.5 text-xs">
+                            <input
+                              type="checkbox"
+                              className="accent-brand"
+                              checked={chosen.has(k)}
+                              onChange={() => toggle(k)}
+                            />
+                            <span className="num">{k}</span>
+                            {f.unwired?.includes(k) ? (
+                              <span className="text-mute">(no screen comes from this key)</span>
+                            ) : null}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-mute">
+                  <span className="num">
+                    {chosen.size} of {total} selected
+                  </span>
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setValues((v) => ({ ...v, [f.name]: '' }))}
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </div>
+            );
           }
           return (
             <Input key={f.name} {...shared} inputMode={f.type === 'number' ? 'numeric' : undefined} />

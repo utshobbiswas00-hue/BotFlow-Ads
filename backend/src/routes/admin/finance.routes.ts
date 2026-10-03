@@ -18,7 +18,7 @@ import { AppError, ValidationError } from '../../utils/errors';
 import { displayName } from '../../utils/format';
 import { buildPaginated, getPagination } from '../../utils/pagination';
 import { requirePermission } from '../../middleware/adminAuth';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 
 export const financeRouter = Router();
 
@@ -137,7 +137,7 @@ financeRouter.get('/deposits', requirePermission('deposits.view'), validate({ qu
 financeRouter.post('/deposits/action', requirePermission('deposits.manage'), validate({ body: depositActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof depositActionSchema>;
-    const actor = adminId(req);
+    const actor = adminUserId(req);
     let data: Deposit;
     switch (body.action) {
       case 'VERIFY': {
@@ -183,7 +183,7 @@ financeRouter.get('/withdrawals', requirePermission('withdrawals.view'), validat
 financeRouter.post('/withdrawals/action', requirePermission('withdrawals.manage'), validate({ body: adminWithdrawalActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof adminWithdrawalActionSchema>;
-    const actor = adminId(req);
+    const actor = adminUserId(req);
     let data: Withdrawal;
     switch (body.action) {
       case 'APPROVE': {
@@ -282,7 +282,7 @@ financeRouter.post(
   async (req, res, next) => {
     try {
       const body = req.body as RefundBody;
-      const data = await issueAdminRefund(adminId(req), body);
+      const data = await issueAdminRefund(adminUserId(req), body);
       respondOk(res, data);
     } catch (err) {
       next(err);

@@ -397,22 +397,6 @@ async function planDeliveryJobs(
 ): Promise<Array<{ id: string; channelId: string; scheduledAt: Date }>> {
   const { campaignId, targets, frequency, startAt, platformFeePercent } = params;
 
-  // Freeze each channel's price now, so later publisher edits cannot alter it.
-  const channelRows = await tx.channel.findMany({
-    where: { id: { in: targets.map((t) => t.channelId) } },
-    select: {
-      id: true,
-      adPriceCents: true,
-      cpmRateCents: true,
-      cpcRateCents: true,
-      pricingModel: true,
-      avgViews: true,
-    },
-  });
-  const priceByChannel = new Map(
-    channelRows.map((c) => [c.id, snapshotPriceCents(c) || 0]),
-  );
-
   const creatives = await tx.ad.findMany({
     where: { campaignId, isActive: true },
     orderBy: { weight: 'desc' },
@@ -439,7 +423,15 @@ async function planDeliveryJobs(
         status: 'PENDING',
         scheduledAt: new Date(baseTime + i * MIN_SPACING_MS),
         // PRICING SNAPSHOT + FEE SNAPSHOT — both frozen for the life of the job.
-        priceCents: priceByChannel.get(target.channelId) ?? target.priceCents,
+        //
+        // `target.priceCents` IS the frozen snapshot: it is the price `resolveTargets`
+        // used to compute `costCents`, which is what `holdCampaignBudget` reserved a few
+        // lines earlier in this same transaction. The job used to re-read the channel row
+        // here and prefer that instead, which agreed only because the read happened in
+        // the same transaction — the ledger and the job would have diverged the moment
+        // anything moved this call. The two must be the same number by construction, not
+        // by timing, so the reserved price is what is written.
+        priceCents: target.priceCents,
         platformFeePercent,
       });
     }
@@ -844,7 +836,12 @@ export async function maybeCompleteCampaign(campaignId: string): Promise<boolean
     where: { id: campaignId },
     select: { id: true, status: true, advertiserId: true },
   });
-  if (!campaign || ['COMPLETED', 'CANCELLED', 'REJECTED'].includes(campaign.status)) return false;
+  // EXPIRED is terminal too. Without it here, a job finishing just after the campaign
+  // expired would flip EXPIRED back to COMPLETED — the delivery worker calls this after
+  // every terminal job.
+  if (!campaign || ['COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(campaign.status)) {
+    return false;
+  }
 
   await transaction(async (tx) => {
     await transitionCampaign(tx, {
@@ -863,5 +860,69 @@ export async function maybeCompleteCampaign(campaignId: string): Promise<boolean
   });
 
   logger.info({ campaignId }, 'campaign completed and escrow released');
+  return true;
+}
+
+/**
+ * Close out a campaign whose `endAt` has passed.
+ *
+ * The expiry sweep used to cancel the campaign's queued jobs and then hand it to
+ * `maybeCompleteCampaign`, which moves to COMPLETED. `EXPIRED` — a state the enum
+ * declares and every status filter, report and API response understands — was
+ * therefore never written once: a campaign the deadline had cut short was reported as
+ * having completed, everywhere.
+ *
+ * Which of the two it is, is decided from what the campaign delivered rather than from
+ * what this sweep happened to do, because a previous sweep may already have cancelled
+ * the jobs:
+ *
+ *   every slot delivered, none cancelled   → COMPLETED (the end time arrived with the
+ *                                             work done; nothing was lost)
+ *   at least one slot cancelled            → EXPIRED   (the deadline ended it early)
+ *
+ * Returns false — leaving the campaign for the next sweep — while anything is still in
+ * flight, the same rule `maybeCompleteCampaign` applies.
+ */
+export async function finaliseExpiredCampaign(campaignId: string): Promise<boolean> {
+  const inFlight = await prisma.deliveryJob.count({
+    where: {
+      campaignId,
+      status: { in: ['PENDING', 'SCHEDULED', 'PROCESSING', 'LOCKED', 'AWAITING_APPROVAL'] },
+    },
+  });
+  if (inFlight > 0) return false;
+
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { id: true, status: true, advertiserId: true },
+  });
+  if (!campaign) return false;
+  if (!['APPROVED', 'SCHEDULED', 'RUNNING', 'PAUSED'].includes(campaign.status)) return false;
+
+  const cancelledJobs = await prisma.deliveryJob.count({
+    where: { campaignId, status: 'CANCELLED' },
+  });
+  const to = cancelledJobs > 0 ? 'EXPIRED' : 'COMPLETED';
+
+  await transaction(async (tx) => {
+    await transitionCampaign(tx, {
+      campaignId,
+      from: campaign.status as CampaignStatus,
+      to,
+      actorType: 'SYSTEM',
+      actorId: null,
+      reason:
+        to === 'EXPIRED'
+          ? `the campaign end time passed with ${cancelledJobs} slot(s) cancelled`
+          : 'every delivery reached a terminal state before the end time',
+    });
+    await releaseCampaignBudget(tx, {
+      campaignId,
+      advertiserId: campaign.advertiserId,
+      reason: to === 'EXPIRED' ? 'expired' : 'completed',
+    });
+  });
+
+  logger.info({ campaignId, status: to, cancelledJobs }, 'campaign closed after its end time');
   return true;
 }

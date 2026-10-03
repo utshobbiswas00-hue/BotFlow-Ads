@@ -18,7 +18,7 @@ import {
 } from '../../services/userModeration.service';
 import { requirePermission } from '../../middleware/adminAuth';
 import { AppError, ForbiddenError } from '../../utils/errors';
-import { adminId, idParams, respondOk } from './common';
+import { adminUserId, idParams, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
 
 export const usersRouter = Router();
@@ -160,7 +160,7 @@ usersRouter.get('/:id', requirePermission('users.view'), validate({ params: idPa
 usersRouter.post('/adjust-balance', requirePermission('users.balance.adjust'), validate({ body: adjustBalanceSchema }), async (req, res, next) => {
   try {
     const body = req.body as AdjustBalanceBody;
-    const data = await adjustUserBalance(adminId(req), body.userId, body.amountCents, body.reason);
+    const data = await adjustUserBalance(adminUserId(req), body.userId, body.amountCents, body.reason);
     respondOk(res, data);
   } catch (err) {
     next(err);

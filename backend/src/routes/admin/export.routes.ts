@@ -33,7 +33,7 @@ import {
   type CsvColumn,
 } from '../../utils/csv';
 import { buildXlsx, type XlsxCell } from '../../utils/xlsx';
-import { adminId } from './common';
+import { adminUserId } from './common';
 
 /**
  * Admin exports (spec §78).
@@ -365,7 +365,7 @@ async function recordExportAudit<T>(
   // Mandatory: exports of user / financial data are sensitive. ONE row per
   // export, recording the acting admin, the row count and the filters used.
   await recordAudit({
-    actorId: adminId(req),
+    actorId: adminUserId(req),
     action: spec.action,
     targetType: 'EXPORT',
     newValue: { rows, truncated, filters: spec.filters },

@@ -9,7 +9,7 @@ import {
   upsertCryptoAddress,
 } from '../../services/cryptoAddress.service';
 import { requirePermission } from '../../middleware/adminAuth';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 
 /**
  * Crypto deposit addresses — the admin panel's side.
@@ -53,7 +53,7 @@ cryptoAddressesRouter.put(
     try {
       const { network } = req.params as unknown as NetworkParams;
       const body = req.body as UpsertBody;
-      const saved = await upsertCryptoAddress(adminId(req), { network, ...body });
+      const saved = await upsertCryptoAddress(adminUserId(req), { network, ...body });
       respondOk(res, saved);
     } catch (err) {
       next(err);
@@ -74,7 +74,7 @@ cryptoAddressesRouter.patch(
     try {
       const { network } = req.params as unknown as NetworkParams;
       const { isActive } = req.body as { isActive: boolean };
-      respondOk(res, await setCryptoAddressActive(adminId(req), network, isActive));
+      respondOk(res, await setCryptoAddressActive(adminUserId(req), network, isActive));
     } catch (err) {
       next(err);
     }
@@ -88,7 +88,7 @@ cryptoAddressesRouter.delete(
   async (req, res, next) => {
     try {
       const { network } = req.params as unknown as NetworkParams;
-      await deleteCryptoAddress(adminId(req), network);
+      await deleteCryptoAddress(adminUserId(req), network);
       respondOk(res, { deleted: true, network });
     } catch (err) {
       next(err);

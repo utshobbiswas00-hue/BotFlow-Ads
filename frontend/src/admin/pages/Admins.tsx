@@ -1,18 +1,17 @@
 /**
  * Admin accounts — SUPER_ADMIN only (`adminUsersRouter.use(requireRole(...))`).
  *
- * Two things this screen cannot do, and says so instead of implying otherwise:
+ * Granting access and giving that grant meaning are two steps, and the second one
+ * used to be impossible here: `PATCH /admin/admin-users/:id` has always accepted a
+ * `permissions` array, but this screen only ever sent `role` and `isActive`, so
+ * every non-SUPER_ADMIN account was created with an empty list — which
+ * `requirePermission` reads as "denied", and only SUPER_ADMIN bypasses. The result
+ * was an account that could not open a single screen, fixable only with a manual
+ * database write. The edit dialog now carries a permission matrix.
  *
- * 1. `POST /admin/admin-users` accepts a telegramId and a role. It does NOT
- *    accept a permission list, and no route in the admin API writes
- *    `AdminUser.permissions`. So a non-SUPER_ADMIN grant starts with an empty
- *    permission array, which `requirePermission` reads as "denied" — only
- *    SUPER_ADMIN bypasses it. The dialog states that consequence rather than
- *    letting someone hand out an account that cannot open a single screen.
- *
- * 2. Deactivation is not deletion. `DELETE /admin/admin-users/:id` sets
- *    `isActive: false` so audit rows keep resolving to a real actor; the row is
- *    never removed. The button is worded accordingly.
+ * Deactivation is still not deletion: `DELETE /admin/admin-users/:id` sets
+ * `isActive: false` so audit rows keep resolving to a real actor, and the row is
+ * never removed. The button is worded accordingly.
  */
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -29,7 +28,15 @@ import {
   listAdminAccounts,
   updateAdminAccount,
 } from '../lib/api';
-import { ADMIN_ROLES, ROLE_LABELS } from '../lib/permissions';
+import {
+  ADMIN_ROLES,
+  adminAccessChangeBlockedReason,
+  adminDeactivationBlockedReason,
+  PERMISSION_GROUPS,
+  ROLE_LABELS,
+  UNWIRED_PERMISSIONS,
+} from '../lib/permissions';
+import { useAdminSession } from '../lib/session';
 import { AdminPageHeader, Section } from '../components/Kpi';
 import { DataTable, Mono, TableFooter, TwoLine, type Column } from '../components/DataTable';
 import { Pager } from '../components/Pager';
@@ -51,11 +58,15 @@ export function AdminAdminsPage() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminAccount | null>(null);
   const [deactivating, setDeactivating] = useState<AdminAccount | null>(null);
+  // Who is signed in, so the screen can refuse to lock them out of it.
+  const { session } = useAdminSession();
+  const me = session?.admin ?? null;
 
   const query = useQuery({
     queryKey: [...qk.adminAccounts, page],
     queryFn: () => listAdminAccounts({ page, limit: LIMIT }),
   });
+  const rows = query.data?.items ?? [];
 
   const invalidate = (): void => {
     void queryClient.invalidateQueries({ queryKey: qk.adminAccounts });
@@ -73,8 +84,25 @@ export function AdminAdminsPage() {
   });
 
   const update = useMutation({
-    mutationFn: ({ id, role, isActive }: { id: string; role: string; isActive: boolean }) =>
-      updateAdminAccount(id, { role, isActive }),
+    mutationFn: ({
+      id,
+      role,
+      isActive,
+      permissions,
+    }: {
+      id: string;
+      role: string;
+      isActive: boolean;
+      permissions: string[];
+    }) =>
+      updateAdminAccount(id, {
+        role,
+        isActive,
+        // Not sent for SUPER_ADMIN: the API rejects the pair, and with good reason —
+        // SUPER_ADMIN bypasses `requirePermission`, so a stored list would look like a
+        // restriction that is never applied.
+        ...(role === 'SUPER_ADMIN' ? {} : { permissions }),
+      }),
     onSuccess: () => {
       showToast('success', 'Admin updated');
       setEditing(null);
@@ -155,7 +183,11 @@ export function AdminAdminsPage() {
       key: 'actions',
       header: '',
       align: 'right',
-      render: (a) => (
+      render: (a) => {
+        // The whole list is needed to answer "is this the last active SUPER_ADMIN", and
+        // `me` to answer "is this me" — the two changes the server refuses.
+        const blockedReason = adminDeactivationBlockedReason(a, me, rows);
+        return (
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           <button
             type="button"
@@ -165,10 +197,15 @@ export function AdminAdminsPage() {
             Change role
           </button>
           {a.isActive ? (
+            // Disabled rather than left to fail: the server refuses this exact change
+            // (assertAdminAccessSurvives), and a 400 with no visible reason is worse than
+            // a button that says why up front.
             <button
               type="button"
+              disabled={blockedReason !== null}
+              title={blockedReason ?? undefined}
               onClick={() => setDeactivating(a)}
-              className="h-8 px-2.5 rounded-lg border border-danger/40 text-danger text-xs font-medium"
+              className="h-8 px-2.5 rounded-lg border border-danger/40 text-danger text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Deactivate
             </button>
@@ -176,14 +213,22 @@ export function AdminAdminsPage() {
             <button
               type="button"
               disabled={update.isPending}
-              onClick={() => update.mutate({ id: a.id, role: a.role, isActive: true })}
+              onClick={() =>
+                update.mutate({
+                  id: a.id,
+                  role: a.role,
+                  isActive: true,
+                  permissions: permissionKeys(a.permissions),
+                })
+              }
               className="h-8 px-2.5 rounded-lg border border-line bg-surface text-xs font-medium disabled:opacity-40"
             >
               Reactivate
             </button>
           )}
         </div>
-      ),
+        );
+      },
     },
   ];
 
@@ -202,7 +247,8 @@ export function AdminAdminsPage() {
       required: true,
       options: ROLE_OPTIONS,
       initialValue: 'ADMIN',
-      hint: 'Anything other than SUPER_ADMIN grants no permissions on its own.',
+      hint:
+        'Anything other than SUPER_ADMIN grants no permissions on its own — tick them afterwards with Change role.',
     },
   ];
 
@@ -224,6 +270,19 @@ export function AdminAdminsPage() {
         { value: 'false', label: 'Inactive' },
       ],
       initialValue: editing ? String(editing.isActive) : 'true',
+    },
+    {
+      name: 'permissions',
+      label: 'Permissions',
+      type: 'permissions',
+      groups: PERMISSION_GROUPS,
+      unwired: UNWIRED_PERMISSIONS,
+      hint:
+        'Checked keys are granted; this replaces the whole list. A role other than SUPER_ADMIN grants nothing on its own, so an account with nothing checked cannot open any screen.',
+      initialValue:
+        editing && editing.role !== 'SUPER_ADMIN'
+          ? permissionKeys(editing.permissions).join(',')
+          : '',
     },
   ];
 
@@ -256,7 +315,7 @@ export function AdminAdminsPage() {
         onRetry={() => void query.refetch()}
       >
         <DataTable
-          rows={query.data?.items ?? []}
+          rows={rows}
           columns={columns}
           rowKey={(a) => a.id}
           emptyTitle="No admin accounts"
@@ -285,7 +344,7 @@ export function AdminAdminsPage() {
               <span className="text-xs text-mute">
                 {r === 'SUPER_ADMIN'
                   ? 'Bypasses every permission check, and the only role that may manage admins.'
-                  : 'Grants nothing on its own — requirePermission reads the permission list, which this API cannot set.'}
+                  : 'Grants nothing on its own — requirePermission reads the permission list set in Change role.'}
               </span>
             </div>
           ))}
@@ -295,7 +354,7 @@ export function AdminAdminsPage() {
       <ConfirmDialog
         open={creating}
         title="Grant admin access"
-        description="Upsert on the Telegram id: if the user already has an admin record this changes the role and reactivates it. A record created here starts with an empty permission list, so a non-SUPER_ADMIN role cannot open any screen until the permission array is written on the admin row directly — the API exposes no way to set it."
+        description="Upsert on the Telegram id: if the user already has an admin record this changes the role and reactivates it. A record granted here starts with an empty permission list, so a non-SUPER_ADMIN account cannot open a screen yet — open it with Change role and tick the permissions it should have."
         fields={createFields}
         confirmLabel="Grant access"
         pending={create.isPending}
@@ -311,7 +370,14 @@ export function AdminAdminsPage() {
       <ConfirmDialog
         open={editing !== null}
         title={`Change ${editing?.userName ?? ''}'s access`}
-        description="Only the role and the active flag are writable here; the permission array is not part of this API."
+        description={[
+          'The permission list is what a non-SUPER_ADMIN role actually grants — the role alone opens nothing.',
+          // Demotion is the other way to lose access, and it is not visible as a button,
+          // so the warning rides on the dialog that can cause it.
+          editing ? adminAccessChangeBlockedReason(editing, me, rows) : null,
+        ]
+          .filter(Boolean)
+          .join(' ')}
         fields={editFields}
         confirmLabel="Save"
         pending={update.isPending}
@@ -322,6 +388,10 @@ export function AdminAdminsPage() {
             id: editing.id,
             role: values.role ?? editing.role,
             isActive: values.isActive !== 'false',
+            permissions: (values.permissions ?? '')
+              .split(',')
+              .map((k) => k.trim())
+              .filter(Boolean),
           });
         }}
       />

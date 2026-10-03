@@ -10,7 +10,7 @@ import { recordAudit } from '../../services/audit.service';
 import { AppError, NotFoundError } from '../../utils/errors';
 import { displayName } from '../../utils/format';
 import { buildPaginated, getPagination } from '../../utils/pagination';
-import { adminId, idParams, respondOk } from './common';
+import { adminRecordId, adminUserId, idParams, respondOk } from './common';
 
 /**
  * Admin management — SUPER_ADMIN only.
@@ -119,7 +119,7 @@ adminUsersRouter.get('/', validate({ query: paginationSchema }), async (req, res
 adminUsersRouter.post('/', validate({ body: createAdminUserSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof createAdminUserSchema>;
-    const actor = adminId(req);
+    const actor = adminUserId(req);
 
     const user = await prisma.user.findUnique({
       where: { telegramId: BigInt(body.telegramId) },
@@ -153,10 +153,62 @@ adminUsersRouter.post('/', validate({ body: createAdminUserSchema }), async (req
 });
 
 /** Change an admin's role, active flag and/or permission keys. */
+/**
+ * Refuse a change that would leave the panel with nobody able to administer it.
+ *
+ * There was no guard here at all, and this failure is total rather than partial: the
+ * last active SUPER_ADMIN could deactivate — or demote — their own account, and the
+ * panel would lock out everybody including the person who did it. The only way back
+ * is a manual database write.
+ *
+ * Two rules, both judged on the RESULTING state rather than on what was asked for:
+ *
+ *   1. an admin may not remove their own access, and
+ *   2. the last active SUPER_ADMIN may not be deactivated or demoted, so the panel
+ *      always keeps one account that can manage admins.
+ *
+ * A change that leaves a SUPER_ADMIN a SUPER_ADMIN is always allowed, and editing
+ * your own permission list is untouched — this is about losing access, not about
+ * editing.
+ */
+export async function assertAdminAccessSurvives(input: {
+  target: { id: string; role: AdminRole; isActive: boolean };
+  actorAdminId: string;
+  resultingRole?: AdminRole;
+  resultingIsActive?: boolean;
+}): Promise<void> {
+  const resultingRole = input.resultingRole ?? input.target.role;
+  const resultingIsActive = input.resultingIsActive ?? input.target.isActive;
+
+  const deactivates = input.target.isActive && !resultingIsActive;
+  const losesSuperAdmin = input.target.role === AdminRole.SUPER_ADMIN && resultingRole !== AdminRole.SUPER_ADMIN;
+  if (!deactivates && !losesSuperAdmin) return;
+
+  if (input.target.id === input.actorAdminId) {
+    throw new AppError(
+      'You cannot remove your own admin access. Ask another SUPER_ADMIN to change or deactivate your account.',
+      400,
+    );
+  }
+
+  // Only an account that currently props the panel up can take the last one away.
+  if (input.target.isActive && input.target.role === AdminRole.SUPER_ADMIN) {
+    const remaining = await prisma.adminUser.count({
+      where: { role: AdminRole.SUPER_ADMIN, isActive: true, id: { not: input.target.id } },
+    });
+    if (remaining === 0) {
+      throw new AppError(
+        'This is the only active SUPER_ADMIN. Deactivating or demoting it would lock everyone out of the admin panel, so the change is refused.',
+        400,
+      );
+    }
+  }
+}
+
 adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUserSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof updateAdminUserSchema>;
-    const actor = adminId(req);
+    const actor = adminUserId(req);
 
     const existing = await prisma.adminUser.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new NotFoundError('Admin');
@@ -191,6 +243,13 @@ adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUse
       }
     }
 
+    await assertAdminAccessSurvives({
+      target: existing,
+      actorAdminId: adminRecordId(req),
+      resultingRole: body.role,
+      resultingIsActive: body.isActive,
+    });
+
     const updated = await prisma.adminUser.update({
       where: { id: req.params.id },
       data: {
@@ -220,10 +279,16 @@ adminUsersRouter.patch('/:id', validate({ params: idParams, body: updateAdminUse
 /** Deactivate an admin account — never hard-deleted (audit trail integrity). */
 adminUsersRouter.delete('/:id', validate({ params: idParams }), async (req, res, next) => {
   try {
-    const actor = adminId(req);
+    const actor = adminUserId(req);
 
     const existing = await prisma.adminUser.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new NotFoundError('Admin');
+
+    await assertAdminAccessSurvives({
+      target: existing,
+      actorAdminId: adminRecordId(req),
+      resultingIsActive: false,
+    });
 
     const updated = await prisma.adminUser.update({
       where: { id: req.params.id },

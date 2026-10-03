@@ -7,7 +7,7 @@ import { getAllSettings, setSetting } from '../../services/settings.service';
 import { requirePermission } from '../../middleware/adminAuth';
 import { SETTING_DEFAULTS } from '../../config/constants';
 import { AppError } from '../../utils/errors';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 
 export const settingsRouter = Router();
 
@@ -100,7 +100,7 @@ settingsRouter.get('/', requirePermission('settings.manage'), async (_req, res, 
 settingsRouter.post('/', requirePermission('settings.manage'), validate({ body: updateSettingRouteSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof updateSettingSchema>;
-    await setSetting(body.key, body.value, adminId(req));
+    await setSetting(body.key, body.value, adminUserId(req));
     respondOk(res, { updated: true });
   } catch (err) {
     next(err);

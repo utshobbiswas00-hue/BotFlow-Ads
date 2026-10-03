@@ -3,7 +3,7 @@ import { childLogger } from '../config/logger';
 import { prisma } from '../db/prisma';
 import { createQueueConnection } from '../db/redis';
 import { JOB, QUEUE_NAMES } from '../queues/names';
-import { enqueueCampaignJobs, maybeCompleteCampaign } from '../services/campaign.service';
+import { enqueueCampaignJobs, finaliseExpiredCampaign } from '../services/campaign.service';
 import { expireStaleApprovals, reclaimStaleDeliveryJobs, sweepDueJobs } from '../services/delivery.service';
 import { schedulerQueue } from '../queues/queue';
 import { register } from './registry';
@@ -56,8 +56,9 @@ async function startScheduledCampaigns(): Promise<void> {
 
 /**
  * Expire campaigns whose end time has passed: cancel their still-queued
- * delivery jobs, then let `maybeCompleteCampaign` release the escrow once
- * nothing is left in flight. Jobs in AWAITING_APPROVAL resolve through the
+ * delivery jobs, then let `finaliseExpiredCampaign` write the terminal status —
+ * EXPIRED when the deadline cost the campaign a slot, COMPLETED when it did not — and
+ * release the escrow once nothing is left in flight. Jobs in AWAITING_APPROVAL resolve through the
  * normal approve/reject flow (publish is refused after endAt, so they all
  * converge to a terminal state).
  */
@@ -87,12 +88,15 @@ async function expireCampaigns(): Promise<void> {
       data: { approvalExpiresAt: now },
     });
 
-    const completed = await maybeCompleteCampaign(id).catch((err) => {
-      log.error({ err, campaignId: id }, 'failed to complete expired campaign');
+    // `finaliseExpiredCampaign`, not `maybeCompleteCampaign`: this path is about the end
+    // time having passed, and it has to be able to write EXPIRED. It still moves a
+    // fully-delivered campaign to COMPLETED — see the note on its definition.
+    const closed = await finaliseExpiredCampaign(id).catch((err) => {
+      log.error({ err, campaignId: id }, 'failed to close expired campaign');
       return false;
     });
 
-    log.info({ campaignId: id, cancelledJobs: cancelled.count, completed }, 'campaign expired');
+    log.info({ campaignId: id, cancelledJobs: cancelled.count, closed }, 'campaign end time passed');
   }
 }
 

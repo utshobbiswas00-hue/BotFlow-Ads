@@ -22,6 +22,7 @@ import {
 } from '../services/creative.service';
 import { listHouseAds, upsertHouseAd, setHouseAdActive, houseAdStats, languageRuleNote } from '../services/houseAd.service';
 import { houseFillStats } from '../services/houseDelivery.service';
+import { adminUserId } from './admin/common';
 import {
   listBlockedDomains,
   addBlockedDomain,
@@ -302,7 +303,7 @@ policyRouter.post(
  *  ADMIN
  * ================================================================== */
 
-const adminOps = Router();
+export const adminOps = Router();
 adminOps.use(requireAdmin());
 adminOps.use(limiters.admin);
 
@@ -394,8 +395,9 @@ adminOps.post(
   }),
   async (req, res, next) => {
     try {
-      const admin = req.admin!;
-      res.json({ ok: true, data: await addBlockedDomain(req.body as never, admin.id) });
+      // The audit rows these services write reference `User`, so they need the
+      // acting admin's User id — not `req.admin.id`, which is the AdminUser row.
+      res.json({ ok: true, data: await addBlockedDomain(req.body as never, adminUserId(req)) });
     } catch (err) {
       next(err);
     }
@@ -404,7 +406,7 @@ adminOps.post(
 
 adminOps.delete('/blocked-domains/:id', requirePermission('settings.manage'), async (req, res, next) => {
   try {
-    await removeBlockedDomain(req.params.id as string, req.admin!.id);
+    await removeBlockedDomain(req.params.id as string, adminUserId(req));
     res.json({ ok: true, data: { removed: true } });
   } catch (err) {
     next(err);
@@ -426,7 +428,7 @@ adminOps.post(
       const body = req.body as { category: never; policy: never; note?: string };
       res.json({
         ok: true,
-        data: await setCategoryPolicy(body.category, body.policy, body.note, req.admin!.id),
+        data: await setCategoryPolicy(body.category, body.policy, body.note, adminUserId(req)),
       });
     } catch (err) {
       next(err);
@@ -443,7 +445,7 @@ adminOps.post(
   async (req, res, next) => {
     try {
       const body = req.body as { action: 'APPROVE' | 'REJECT'; note?: string };
-      await reviewCreativeVersion(req.admin!.id, req.params.id as string, body.action, body.note);
+      await reviewCreativeVersion(adminUserId(req), req.params.id as string, body.action, body.note);
       res.json({ ok: true, data: { reviewed: true } });
     } catch (err) {
       next(err);
@@ -513,7 +515,20 @@ adminOps.post('/referrals/settle', requireRole('ADMIN', 'SUPER_ADMIN', 'FINANCE_
   }
 });
 
-policyRouter.use('/admin/ops', adminOps);
+// `adminOps` is deliberately NOT mounted here.
+//
+// It contains the panel's own screens (Ops dashboard, house ads, blocked domains,
+// creative review, delivery ops, CPC and referral settlement). Mounting it on this
+// router put it at `/api/admin/ops/*`, which the user router serves — and the user
+// router runs `telegramAuth()` at its root, so every one of those screens answered
+// 401 "Telegram authentication required" to a browser session that had signed in
+// with the panel password. The mount order in app.ts meant the request passed
+// through the admin router (whose auth accepted the session), found no matching
+// route there, fell through to `/api`, and was rejected there.
+//
+// It is now mounted inside `adminRouter` (routes/admin/index.ts), after
+// `adminPanelAuth`, so the session cookie the password login issues is the
+// credential that is actually checked. The public paths are unchanged.
 
 /**
  * CPC billing note, surfaced in one place so the API documents the model.

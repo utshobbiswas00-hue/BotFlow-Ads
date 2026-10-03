@@ -25,6 +25,7 @@ import { notificationsRouter } from './notifications.routes';
 import { planPremiumRouter } from './premium.routes';
 import { searchRouter } from './search.routes';
 import { sessionRouter } from './session.routes';
+import { adminOps } from '../policy.routes';
 import { systemStatusRouter } from './systemStatus.routes';
 import { settingsRouter } from './settings.routes';
 import { supportRouter } from './support.routes';
@@ -60,6 +61,12 @@ adminRouter.use('/auth', adminAuthRouter);
 // The acting admin's own role + permission keys. Gated by `requireAdmin` alone:
 // an admin whose permission array is empty must still be able to read it, or the
 // panel can only ever show a bare 403 with no way to explain itself.
+// The panel's operational screens. Declared in ../policy.routes (they grew out of
+// the policy work) and mounted HERE, behind `adminPanelAuth` above, because they
+// are part of the panel: while they hung off the user router they were unreachable
+// from a password-signed-in browser — see the note at their definition.
+adminRouter.use('/ops', adminOps);
+
 adminRouter.use('/session', sessionRouter);
 
 adminRouter.use('/dashboard', dashboardRouter);

@@ -34,9 +34,15 @@ const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   notificationCreateMany: vi.fn(),
   notificationUpdateMany: vi.fn(),
+  notificationFindFirst: vi.fn(),
+  notificationUpdate: vi.fn(),
   transaction: vi.fn(),
   enqueueBroadcast: vi.fn(async () => 'broadcast:queue'),
   enqueueNotification: vi.fn(async (_payload: Record<string, unknown>) => undefined),
+  // The bulk fan-out uses the strict variant, which reports whether the queue accepted
+  // the job: a recipient whose push never got queued is undelivered, not pending, and the
+  // broadcast has to record that. Resolves true so these tests cover the queued path.
+  enqueueNotificationStrict: vi.fn(async (_payload: Record<string, unknown>) => true),
   sendUserMessage: vi.fn(async () => true),
   sendUserMessageDetailed: vi.fn(),
   sendMail: vi.fn(async () => ({ sent: false, reason: 'email disabled' })),
@@ -68,6 +74,10 @@ vi.mock('../../db/prisma', () => ({
     notification: {
       createMany: mocks.notificationCreateMany,
       updateMany: mocks.notificationUpdateMany,
+      // `deliverToTelegram` marks exactly one row as delivered, by id, rather than
+      // updateMany-ing every undelivered row that shares the same type/title/body.
+      findFirst: mocks.notificationFindFirst,
+      update: mocks.notificationUpdate,
     },
     $transaction: mocks.transaction,
   },
@@ -79,6 +89,7 @@ vi.mock('../../services/audit.service', () => ({ recordAudit: vi.fn(async () => 
 vi.mock('../../queues/producers', () => ({
   enqueueBroadcast: mocks.enqueueBroadcast,
   enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationStrict: mocks.enqueueNotificationStrict,
 }));
 
 vi.mock('../../middleware/adminAuth', () => ({
@@ -111,7 +122,12 @@ const {
   broadcastRecipientCount,
   broadcastRecipientGroupBy,
   notificationCreateMany,
+  notificationFindFirst,
+  notificationUpdate,
+  notificationUpdateMany,
+  userFindUnique,
   enqueueNotification,
+  enqueueNotificationStrict,
 } = mocks;
 
 import {
@@ -128,7 +144,11 @@ import {
   listBroadcastHistoryHandler,
   listBroadcastRecipientsHandler,
 } from '../../routes/admin/broadcast.routes';
-import { createBulkNotifications, classifyUserMessageResult } from '../notification.service';
+import {
+  createBulkNotifications,
+  classifyUserMessageResult,
+  deliverToTelegram,
+} from '../notification.service';
 import { getPagination } from '../../utils/pagination';
 import { BroadcastJobStatus, BroadcastRecipientStatus } from '@prisma/client';
 
@@ -591,8 +611,8 @@ describe('notification payload shape', () => {
       { userId: 'u1', type: 'SYSTEM' as never, title: 't', body: 'b' },
     ]);
 
-    expect(enqueueNotification).toHaveBeenCalledTimes(1);
-    const payload = enqueueNotification.mock.calls[0]![0] as Record<string, unknown>;
+    expect(enqueueNotificationStrict).toHaveBeenCalledTimes(1);
+    const payload = enqueueNotificationStrict.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload).toEqual({ userId: 'u1', type: 'SYSTEM', title: 't', body: 'b', data: undefined });
     expect('broadcastJobId' in payload).toBe(false);
     expect('broadcastRecipientId' in payload).toBe(false);
@@ -612,7 +632,7 @@ describe('notification payload shape', () => {
       },
     ]);
 
-    expect(enqueueNotification).toHaveBeenCalledWith(
+    expect(enqueueNotificationStrict).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'u1',
         broadcastJobId: 'job-1',
@@ -648,5 +668,108 @@ describe('classifyUserMessageResult', () => {
     expect(
       classifyUserMessageResult({ ok: false, messageId: null, error: 'timeout', permanent: false }),
     ).toEqual({ status: 'FAILED', telegramMessageId: null, error: 'timeout' });
+  });
+});
+
+/**
+ * The row is the notification; the push is its delivery.
+ *
+ * A bulk fan-out used to queue the Telegram pushes even when the rows could not be
+ * stored, which produced a user who received a message the panel's history had no record
+ * of — the one state that cannot be reconciled afterwards. And a broadcast recipient whose
+ * push was never queued is not "pending": it is undelivered, and the job would otherwise
+ * wait for it for ever.
+ */
+describe('a fan-out that could not be stored', () => {
+  it('queues nothing', async () => {
+    notificationCreateMany.mockRejectedValue(new Error('database unavailable'));
+
+    await createBulkNotifications([
+      { userId: 'u1', type: 'SYSTEM' as never, title: 't', body: 'b' },
+      { userId: 'u2', type: 'SYSTEM' as never, title: 't', body: 'b' },
+    ]);
+
+    expect(enqueueNotificationStrict).not.toHaveBeenCalled();
+  });
+
+  it('records a tracked recipient as FAILED rather than leaving it pending', async () => {
+    notificationCreateMany.mockRejectedValue(new Error('database unavailable'));
+    broadcastRecipientUpdate.mockResolvedValue({});
+    broadcastRecipientGroupBy.mockResolvedValue([
+      { status: 'FAILED', _count: { _all: 1 } },
+    ]);
+    broadcastJobUpdate.mockResolvedValue({});
+
+    await createBulkNotifications([
+      {
+        userId: 'u1',
+        type: 'SYSTEM' as never,
+        title: 't',
+        body: 'b',
+        broadcastJobId: 'job-1',
+        broadcastRecipientId: 'rec-1',
+      },
+    ]);
+
+    expect(broadcastRecipientUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'rec-1' },
+        data: expect.objectContaining({ status: 'FAILED' }),
+      }),
+    );
+    expect(enqueueNotificationStrict).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * One push, one notification.
+ *
+ * Marking the row as delivered used to be an `updateMany` filtered on
+ * (user, type, title, body, undelivered), so two identical notifications of the same type
+ * were both marked delivered as soon as one push succeeded — the second was reported as
+ * delivered while its own push was still queued, or never queued at all.
+ */
+describe('marking a notification delivered', () => {
+  it('updates exactly one row, chosen by id and oldest first', async () => {
+    userFindUnique.mockResolvedValue({ telegramId: 4242n });
+    notificationFindFirst.mockResolvedValue({ id: 'n_1' });
+    notificationUpdate.mockResolvedValue({});
+
+    const ok = await deliverToTelegram({
+      userId: 'u1',
+      type: 'SYSTEM',
+      title: 'Maintenance',
+      body: 'Window 02:00-03:00',
+    });
+
+    expect(ok).toBe(true);
+    expect(notificationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: 'u1',
+          type: 'SYSTEM',
+          title: 'Maintenance',
+          body: 'Window 02:00-03:00',
+          delivered: false,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
+    expect(notificationUpdate).toHaveBeenCalledWith({
+      where: { id: 'n_1' },
+      data: expect.objectContaining({ delivered: true }),
+    });
+    // The bulk update that could touch unrelated twins is gone.
+    expect(notificationUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('delivers without a row to mark, rather than failing the push', async () => {
+    userFindUnique.mockResolvedValue({ telegramId: 4242n });
+    notificationFindFirst.mockResolvedValue(null);
+
+    expect(
+      await deliverToTelegram({ userId: 'u1', type: 'SYSTEM', title: 't', body: 'b' }),
+    ).toBe(true);
+    expect(notificationUpdate).not.toHaveBeenCalled();
   });
 });

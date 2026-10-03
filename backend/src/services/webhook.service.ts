@@ -11,7 +11,11 @@ import { logger } from '../config/logger';
 import { SETTING_KEYS } from '../config/constants';
 import { getBoolSetting, getNumberSetting } from './settings.service';
 import { NotFoundError, ValidationError } from '../utils/errors';
-import { isPrivateOrInternalHost } from './urlSecurity.service';
+import {
+  isPrivateOrInternalHost,
+  pinnedLookup,
+  resolveHostAddresses,
+} from './urlSecurity.service';
 import { recordAudit } from './audit.service';
 import { enqueueWebhookDelivery } from '../queues/producers';
 
@@ -443,9 +447,26 @@ export async function deliverWebhook(deliveryId: string): Promise<DeliveryOutcom
     // Defence in depth: re-check at delivery time so an endpoint stored before
     // this guard existed (or via a direct DB write) can never be dialled.
     assertPublicWebhookUrl(endpoint.url);
+
+    // The check above only judges the hostname, and it was made when the endpoint was
+    // registered — DNS is free to have changed since. This is the request that actually
+    // reaches the network, so this is where the resolved addresses have to be vetted,
+    // and where the vetted answers get pinned to it.
+    const resolution = await resolveHostAddresses(new URL(endpoint.url).hostname);
+    if (!resolution.ok) {
+      throw new Error(
+        resolution.reason === 'internal'
+          ? 'Webhook host resolves to a private, loopback, link-local or internal address'
+          : 'Webhook host could not be resolved',
+      );
+    }
+
     const response = await axios.post(endpoint.url, rawBody, {
       timeout: DELIVERY_TIMEOUT_MS,
       maxRedirects: 0,
+      lookup: pinnedLookup(resolution.addresses) as NonNullable<
+        Parameters<typeof axios.post>[2]
+      >['lookup'],
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'BotFlow-Webhooks/1.0',

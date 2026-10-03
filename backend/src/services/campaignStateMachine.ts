@@ -21,7 +21,12 @@ import { ConflictError, NotFoundError } from '../utils/errors';
 export const ALLOWED_TRANSITIONS: Record<CampaignStatus, CampaignStatus[]> = {
   DRAFT: ['PENDING_REVIEW', 'CANCELLED'],
   PENDING_REVIEW: ['APPROVED', 'REJECTED', 'CANCELLED'],
-  APPROVED: ['SCHEDULED', 'RUNNING', 'PAUSED', 'CANCELLED', 'SUSPENDED'],
+  // APPROVED → EXPIRED: an approved campaign whose window closed before it ever
+  // started. The expiry sweep selects APPROVED campaigns too, so without this edge a
+  // campaign that was approved and then simply ran out of time could not be moved out
+  // of APPROVED at all — `assertTransition` would refuse and the sweep would log a
+  // failure on every pass.
+  APPROVED: ['SCHEDULED', 'RUNNING', 'PAUSED', 'CANCELLED', 'SUSPENDED', 'EXPIRED'],
   SCHEDULED: ['RUNNING', 'PAUSED', 'CANCELLED', 'EXPIRED', 'SUSPENDED'],
   RUNNING: ['PAUSED', 'COMPLETED', 'CANCELLED', 'SUSPENDED', 'EXPIRED'],
   PAUSED: ['RUNNING', 'SCHEDULED', 'CANCELLED', 'EXPIRED', 'SUSPENDED'],

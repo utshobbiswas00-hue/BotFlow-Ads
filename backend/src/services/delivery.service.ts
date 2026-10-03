@@ -61,6 +61,9 @@ const PAUSED_RECHECK_MS = 30 * 60 * 1000;
 const RETRYABLE_ERRORS = new Set<DeliveryErrorCode>([
   'TELEGRAM_API_ERROR',
   'RATE_LIMITED',
+  // The rules that guard a post could not be read. Nothing was published, so retrying
+  // is safe and is the only correct answer — see the blocklist check below.
+  'POLICY_CHECK_UNAVAILABLE',
 ]);
 
 /**
@@ -306,16 +309,38 @@ export async function publishDeliveryJob(deliveryJobId: string): Promise<Publish
     // The blocklist is applied when the campaign is created, but an entry added
     // afterwards (or a CAMPAIGN-scope entry, which creation cannot match because
     // the campaign id does not exist yet) must still be honoured at publish time.
-    const blocked = await isBlocked({
-      channelId: channel.id,
-      advertiserId: campaign.advertiserId,
-      campaignId: fresh.campaignId,
-      category: campaign.category ?? null,
-      domain: creative.destinationUrl ?? null,
-    }).catch((err) => {
-      logger.warn({ err, deliveryJobId: fresh.id }, 'blocklist check failed — allowing delivery');
-      return { blocked: false as const };
-    });
+    // Fail CLOSED when the check itself breaks.
+    //
+    // This used to `.catch()` into `{ blocked: false }`, i.e. publish the ad whenever the
+    // lookup threw — which is precisely when the publisher's refusal could not be
+    // evaluated. The blocklist is the only thing enforcing that refusal, so failing open
+    // silently published an advertiser, category or domain the publisher had excluded.
+    //
+    // The two directions are not symmetric. Nothing has been published yet at this point,
+    // so retrying is safe and cheap; and if the blocklist stays unreadable, the job runs
+    // out of attempts and ends as a terminal failure, with the advertiser's reservation
+    // released through the normal escrow path. A delivered post a publisher refused cannot
+    // be taken back; a delayed one can.
+    let blocked: { blocked: boolean; reason?: string };
+    try {
+      blocked = await isBlocked({
+        channelId: channel.id,
+        advertiserId: campaign.advertiserId,
+        campaignId: fresh.campaignId,
+        category: campaign.category ?? null,
+        domain: creative.destinationUrl ?? null,
+      });
+    } catch (err) {
+      logger.error(
+        { err, deliveryJobId: fresh.id },
+        'blocklist check failed — holding the delivery instead of publishing',
+      );
+      return await fail(
+        fresh,
+        'POLICY_CHECK_UNAVAILABLE',
+        'The channel blocklist could not be read, so this post was not published.',
+      );
+    }
     if (blocked.blocked) {
       const reason = blocked.reason ?? 'Blocked by the channel owner';
       await recordDeliveryEvent(null, {

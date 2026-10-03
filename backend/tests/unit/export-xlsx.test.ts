@@ -70,7 +70,15 @@ function handlerFor(path: string): (req: any, res: any, next: any) => Promise<vo
 }
 
 function makeReq() {
-  return { query: {}, admin: { id: 'admin-1', role: 'ADMIN', permissions: [] } };
+  // A real admin request carries BOTH identities, set by the auth middlewares:
+  // `req.user` is the underlying User row and `req.admin` is the AdminUser row, and in
+  // production the two ids differ. Audit fields reference `User`, so that is the one
+  // `adminUserId()` reads — hence the assertion below is on `user-1`.
+  return {
+    query: {},
+    user: { id: 'user-1' },
+    admin: { id: 'admin-1', role: 'ADMIN', permissions: [] },
+  };
 }
 
 function makeRes() {
@@ -141,7 +149,7 @@ describe('GET /api/admin/export/users.xlsx', () => {
 
     const [xlsxAudit, csvAudit] = calls;
     expect(xlsxAudit[0]).toMatchObject({
-      actorId: 'admin-1',
+      actorId: 'user-1',
       action: 'EXPORT_USERS',
       targetType: 'EXPORT',
       newValue: { rows: 1, truncated: false },

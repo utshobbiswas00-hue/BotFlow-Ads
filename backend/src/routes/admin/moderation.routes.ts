@@ -7,7 +7,7 @@ import { moderateAdPost } from '../../services/moderation.service';
 import { recalculateUserRisk, scanClickPatterns } from '../../services/fraud.service';
 import { listReports, resolveReport } from '../../services/report.service';
 import { requirePermission } from '../../middleware/adminAuth';
-import { adminId, idParams, respondOk } from './common';
+import { adminUserId, idParams, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
 
 export const moderationRouter = Router();
@@ -42,7 +42,7 @@ moderationRouter.get('/reports', requirePermission('fraud.view'), validate({ que
 moderationRouter.post('/reports/action', requirePermission('fraud.manage'), validate({ body: reportActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof reportActionSchema>;
-    const data = await resolveReport(adminId(req), body.reportId, body.action, body.actionTaken ?? undefined);
+    const data = await resolveReport(adminUserId(req), body.reportId, body.action, body.actionTaken ?? undefined);
     respondOk(res, data);
   } catch (err) {
     next(err);
@@ -53,7 +53,7 @@ moderationRouter.post('/reports/action', requirePermission('fraud.manage'), vali
 moderationRouter.post('/ads/action', requirePermission('fraud.manage'), validate({ body: adPostActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof adPostActionSchema>;
-    const data = await moderateAdPost(adminId(req), body.adPostId, body.action);
+    const data = await moderateAdPost(adminUserId(req), body.adPostId, body.action);
     respondOk(res, data);
   } catch (err) {
     next(err);

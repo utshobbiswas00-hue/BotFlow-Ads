@@ -11,6 +11,17 @@ export interface RateLimitOptions {
   scope?: 'ip' | 'user' | 'telegram';
   prefix?: string;
   message?: string;
+  /**
+   * Enforce the limit from an in-process counter when Redis cannot answer.
+   *
+   * Only for credentials where "no limit at all" is worse than "a limit that is
+   * merely per-instance": a Redis outage used to fail every limiter open, which
+   * removed the brute-force protection on `POST /api/admin/auth/login` exactly when
+   * the rest of the system was already degraded. The fallback is per-container and
+   * therefore weaker under scale-out than the shared counter — which is why it is
+   * opt-in per limiter rather than the default.
+   */
+  emergencyLocalFallback?: boolean;
 }
 
 /**
@@ -21,7 +32,7 @@ export interface RateLimitOptions {
  * once the web service scales beyond one container.
  */
 export function rateLimit(options: RateLimitOptions) {
-  const { windowSeconds, max, scope = 'ip', prefix = 'rl', message } = options;
+  const { windowSeconds, max, scope = 'ip', prefix = 'rl', message, emergencyLocalFallback } = options;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (isTest) return next();
@@ -46,11 +57,60 @@ export function rateLimit(options: RateLimitOptions) {
         next(err);
         return;
       }
-      // A Redis outage must not take the API down — fail open.
+      // A Redis outage must not take the API down, so the default is still to fail
+      // open. Limiters that guard credentials opt into the local counter instead.
+      if (emergencyLocalFallback) {
+        const key = `${prefix}:${scope}:${resolveIdentity(req, scope)}:${bucket(req, windowSeconds)}`;
+        const count = localIncr(key, windowSeconds);
+        res.setHeader('X-RateLimit-Limit', max);
+        res.setHeader('X-RateLimit-Remaining', Math.max(0, max - count));
+        if (count > max) {
+          const retryAfter = windowSeconds - (Math.floor(Date.now() / 1000) % windowSeconds);
+          res.setHeader('Retry-After', retryAfter);
+          logger.warn(
+            { key: prefix, path: req.path, ip: req.ctx?.ip, count },
+            'rate limit exceeded (in-process fallback)',
+          );
+          next(new RateLimitError(message ?? 'Too many requests, please slow down', retryAfter));
+          return;
+        }
+        logger.error(
+          { err, key: prefix, path: req.path },
+          'rate limiter unavailable — enforcing the limit from the in-process fallback',
+        );
+        next();
+        return;
+      }
+
       logger.error({ err }, 'rate limiter unavailable, failing open');
       next();
     }
   };
+}
+
+/**
+ * Fixed-window counter kept in this process, for the limiters that must not become
+ * unlimited while Redis is unreachable.
+ *
+ * Deliberately bounded: it only exists during an outage, and the sweep keeps a long
+ * outage from turning into a slow memory leak.
+ */
+const localWindows = new Map<string, { count: number; expiresAtMs: number }>();
+
+function localIncr(key: string, windowSeconds: number): number {
+  const now = Date.now();
+  const entry = localWindows.get(key);
+  if (!entry || entry.expiresAtMs <= now) {
+    if (localWindows.size >= 10_000) {
+      for (const [k, v] of localWindows) {
+        if (v.expiresAtMs <= now) localWindows.delete(k);
+      }
+    }
+    localWindows.set(key, { count: 1, expiresAtMs: now + windowSeconds * 1000 });
+    return 1;
+  }
+  entry.count += 1;
+  return entry.count;
 }
 
 function resolveIdentity(req: Request, scope: RateLimitOptions['scope']): string {
@@ -73,7 +133,12 @@ export const limiters = {
   global: rateLimit({ windowSeconds: 60, max: 300, prefix: 'rl:global' }),
 
   /** Auth / account bootstrap — expensive (DB writes on first sight). */
-  auth: rateLimit({ windowSeconds: 60, max: 30, prefix: 'rl:auth' }),
+  auth: rateLimit({
+    windowSeconds: 60,
+    max: 30,
+    prefix: 'rl:auth',
+    emergencyLocalFallback: true,
+  }),
 
   /** Creating campaigns is expensive and a classic abuse vector. */
   createCampaign: rateLimit({ windowSeconds: 3600, max: 20, prefix: 'rl:campaign', scope: 'user' }),
@@ -105,7 +170,13 @@ export const limiters = {
    * attack useless without locking out a legitimate operator who mistypes twice.
    * Scoped by IP (the default), because there is no authenticated user yet.
    */
-  adminLogin: rateLimit({ windowSeconds: 900, max: 10, prefix: 'rl:adminlogin' }),
+  adminLogin: rateLimit({
+    windowSeconds: 900,
+    max: 10,
+    prefix: 'rl:adminlogin',
+    // Password guessing must not become unlimited because Redis is down.
+    emergencyLocalFallback: true,
+  }),
 
   /** Webhook endpoints — generous, but bounded. */
   webhook: rateLimit({ windowSeconds: 60, max: 1000, prefix: 'rl:webhook' }),

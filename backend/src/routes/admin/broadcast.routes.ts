@@ -16,7 +16,7 @@ import {
 import { recordAudit } from '../../services/audit.service';
 import { AppError } from '../../utils/errors';
 import { getPagination } from '../../utils/pagination';
-import { adminId, idParams, respondOk } from './common';
+import { adminUserId, idParams, respondOk } from './common';
 
 /**
  * Admin broadcast (spec §52).
@@ -270,7 +270,7 @@ broadcastRouter.post(
         title,
         body,
         audience,
-        createdById: adminId(req),
+        createdById: adminUserId(req),
         userIds,
       });
 
@@ -298,7 +298,7 @@ broadcastRouter.post(
       // it is recorded here on purpose — an audit row is not a place for secrets,
       // and no token/credential ever belongs in `newValue`.
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         action: 'BROADCAST_SENT',
         targetType: 'BROADCAST',
         newValue: { audience, recipients, title, broadcastJobId: created.jobId },

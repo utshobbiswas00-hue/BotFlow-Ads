@@ -3,7 +3,7 @@ import { prisma } from '../db/prisma';
 import { pingRedis } from '../db/redis';
 import { getQueueHealth } from '../queues/queue';
 import { logger } from '../config/logger';
-import { telegramAuth } from '../middleware/telegramAuth';
+import { adminPanelAuth } from '../middleware/adminPanelAuth';
 import { requireAdmin } from '../middleware/adminAuth';
 
 /**
@@ -50,9 +50,17 @@ healthRouter.get('/', async (_req, res) => {
 
 // Operational state (live job counts per queue) — admin only. The public probe
 // above stays unauthenticated; this one does not leak queue internals.
+//
+// `adminPanelAuth`, not `telegramAuth`: this route lives at the app root (Render
+// probes the sibling above), so it is not inside the `/api/admin` chain and the
+// panel's password session was never checked here. A browser that had signed in
+// with the password got 401 "Telegram authentication required" and the Ops page's
+// queue-health panel stayed empty. `adminPanelAuth` accepts either door — the
+// session cookie the password login issues, or Telegram initData — which is what
+// the rest of the panel already uses.
 healthRouter.get(
   '/queues',
-  telegramAuth({ autoProvision: false, requireActive: true }),
+  adminPanelAuth(),
   requireAdmin(),
   async (_req, res, next) => {
     try {

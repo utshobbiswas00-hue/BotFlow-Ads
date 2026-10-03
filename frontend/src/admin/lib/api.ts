@@ -588,7 +588,7 @@ export const createAdminAccount = (telegramId: string, role: string): Promise<Ad
 
 export const updateAdminAccount = (
   id: string,
-  patch: { role?: string; isActive?: boolean },
+  patch: { role?: string; isActive?: boolean; permissions?: string[] },
 ): Promise<AdminAccount> => api.patch<AdminAccount>(`${BASE}/admin-users/${encodeURIComponent(id)}`, patch);
 
 export const deactivateAdminAccount = (id: string): Promise<AdminAccount> =>
@@ -597,9 +597,12 @@ export const deactivateAdminAccount = (id: string): Promise<AdminAccount> =>
 /* ===============================================================
  * The second admin surface: /api/admin/ops/*
  *
- * Defined in `routes/policy.routes.ts` (NOT `routes/admin/`) and mounted on the
- * user-facing router as `/api/admin/ops`. Same guards — `requireAdmin()` at the
- * router level, then a per-route `requirePermission` or `requireRole`.
+ * Defined in `routes/policy.routes.ts` (NOT `routes/admin/`) but mounted inside
+ * `adminRouter` at `/api/admin/ops`, behind `adminPanelAuth` — the same session the
+ * rest of the panel uses. It used to hang off the user-facing router, which runs
+ * `telegramAuth()` and therefore 401'd every password-signed-in browser. Same
+ * guards — `requireAdmin()` at the router level, then a per-route
+ * `requirePermission` or `requireRole`.
  *
  * Two of these are role-gated rather than permission-gated:
  * `/cpc/settle` and `/referrals/settle` require

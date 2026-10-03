@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '../../../middleware/adminAuth';
-import { findUnknownPermissions, updateAdminUserSchema } from '../adminUsers.routes';
+import {
+  assertAdminAccessSurvives,
+  findUnknownPermissions,
+  updateAdminUserSchema,
+} from '../adminUsers.routes';
 
 /**
  * DB-FREE unit tests for the permission-validation half of the admin-users
@@ -85,5 +89,117 @@ describe('updateAdminUserSchema', () => {
     const parsed = updateAdminUserSchema.parse({ permissions: ['totally.unknown'] });
     expect(parsed.permissions).toEqual(['totally.unknown']);
     expect(findUnknownPermissions(parsed.permissions ?? [])).toEqual(['totally.unknown']);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Locking yourself (or everyone) out of the panel
+ * ------------------------------------------------------------------ */
+
+describe('assertAdminAccessSurvives', () => {
+  const superAdmin = { id: 'adm_1', role: 'SUPER_ADMIN' as const, isActive: true };
+  const otherSuper = { id: 'adm_2', role: 'SUPER_ADMIN' as const, isActive: true };
+  const moderator = { id: 'adm_3', role: 'MODERATOR' as const, isActive: true };
+
+  it('refuses to let an admin deactivate their own account', async () => {
+    await expect(
+      assertAdminAccessSurvives({
+        target: superAdmin,
+        actorAdminId: 'adm_1',
+        resultingIsActive: false,
+      }),
+    ).rejects.toThrow(/your own admin access/i);
+  });
+
+  it('refuses to let an admin demote themselves out of SUPER_ADMIN', async () => {
+    await expect(
+      assertAdminAccessSurvives({
+        target: superAdmin,
+        actorAdminId: 'adm_1',
+        resultingRole: 'ADMIN',
+      }),
+    ).rejects.toThrow(/your own admin access/i);
+  });
+
+  it('refuses to remove the last active SUPER_ADMIN', async () => {
+    // Nobody is left who can manage admins, and the only way back is a database write.
+    const { prisma } = await import('../../../db/prisma');
+    vi.mocked(prisma.adminUser.count).mockResolvedValue(0);
+
+    await expect(
+      assertAdminAccessSurvives({
+        target: superAdmin,
+        actorAdminId: 'adm_2',
+        resultingIsActive: false,
+      }),
+    ).rejects.toThrow(/only active SUPER_ADMIN/i);
+  });
+
+  it('refuses to demote the last active SUPER_ADMIN too, not only to deactivate it', async () => {
+    const { prisma } = await import('../../../db/prisma');
+    vi.mocked(prisma.adminUser.count).mockResolvedValue(0);
+
+    await expect(
+      assertAdminAccessSurvives({
+        target: superAdmin,
+        actorAdminId: 'adm_2',
+        resultingRole: 'ADMIN',
+      }),
+    ).rejects.toThrow(/only active SUPER_ADMIN/i);
+  });
+
+  it('allows it once another active SUPER_ADMIN remains', async () => {
+    const { prisma } = await import('../../../db/prisma');
+    vi.mocked(prisma.adminUser.count).mockResolvedValue(1);
+
+    await expect(
+      assertAdminAccessSurvives({
+        target: otherSuper,
+        actorAdminId: 'adm_1',
+        resultingIsActive: false,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows deactivating a non-SUPER_ADMIN', async () => {
+    await expect(
+      assertAdminAccessSurvives({
+        target: moderator,
+        actorAdminId: 'adm_1',
+        resultingIsActive: false,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('leaves editing your own permission list alone', async () => {
+    // Trimming your own screens is not the same as removing your access, and this guard
+    // must not become a ban on self-editing.
+    await expect(
+      assertAdminAccessSurvives({
+        target: moderator,
+        actorAdminId: 'adm_3',
+        resultingIsActive: true,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('leaves a SUPER_ADMIN that stays a SUPER_ADMIN alone, even when it is you', async () => {
+    await expect(
+      assertAdminAccessSurvives({
+        target: superAdmin,
+        actorAdminId: 'adm_1',
+        resultingRole: 'SUPER_ADMIN',
+        resultingIsActive: true,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not ask the database when nothing is being removed', async () => {
+    const { prisma } = await import('../../../db/prisma');
+    vi.clearAllMocks();
+
+    await assertAdminAccessSurvives({ target: moderator, actorAdminId: 'adm_1' });
+
+    expect(prisma.adminUser.count).not.toHaveBeenCalled();
   });
 });

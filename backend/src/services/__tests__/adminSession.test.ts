@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Server-side session store.
@@ -168,5 +168,55 @@ describe('csrfMatches', () => {
     expect(svc.csrfMatches('', '')).toBe(false);
     expect(svc.csrfMatches('token', '')).toBe(false);
     expect(svc.csrfMatches('', 'token')).toBe(false);
+  });
+});
+
+/**
+ * The in-process fallback is a development convenience, not a production mode.
+ *
+ * Above, this file deliberately exercises the fallback path — it is the code that runs
+ * during a Redis outage and the one nobody watches. What it must NOT do in production is
+ * come up at all: with more than one API instance the session is invisible to the others,
+ * so the operator is signed out at random on the next request. A clear failure is better
+ * than a session that appears to work.
+ */
+describe('refusing to invent a session when Redis is down', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses to create a session in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+
+    await expect(makeSession()).rejects.toThrow(/cannot start a session/i);
+  });
+
+  it('still reads sessions created before the outage, so nobody is thrown out mid-flight', async () => {
+    const created = await makeSession();
+
+    vi.stubEnv('NODE_ENV', 'production');
+    const read = await svc.readSession(created.sid);
+
+    expect(read?.adminId).toBe('adm_1');
+  });
+
+  it('can be opted into explicitly for a single-instance deployment', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ADMIN_SESSION_ALLOW_MEMORY_FALLBACK', 'true');
+
+    const created = await makeSession();
+
+    expect(created.sid).toBeTruthy();
+    expect((await svc.readSession(created.sid))?.adminId).toBe('adm_1');
+  });
+
+  it('keeps working outside production, where there is only one instance', async () => {
+    // The default for a dev machine with no Redis: the panel still works.
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('ADMIN_SESSION_ALLOW_MEMORY_FALLBACK', '');
+
+    const created = await makeSession();
+
+    expect((await svc.readSession(created.sid))?.adminId).toBe('adm_1');
   });
 });

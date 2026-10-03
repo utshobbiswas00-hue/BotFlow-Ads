@@ -1,5 +1,6 @@
 import { deliveryQueue, notificationQueue, permissionQueue, statsQueue, webhookQueue, withdrawalQueue } from './queue';
 import { JOB } from './names';
+import { randomUUID } from 'node:crypto';
 import { logger } from '../config/logger';
 
 /**
@@ -103,6 +104,24 @@ export async function enqueueWithdrawalProcessing(withdrawalId: string): Promise
  * ------------------------------------------------------------------ */
 
 /**
+ * This process's own token, mixed into notification job ids.
+ *
+ * The id used to be `notify:<user>:<type>:<Date.now()>`, which is not actually unique:
+ * two notifications for the same user and type inside one millisecond produced the same
+ * id, BullMQ treats a duplicate job id as a job it already has, and the second push was
+ * silently never delivered. A per-process token plus a counter keeps the id readable
+ * (user and type are still in it) and makes a collision require two processes to agree
+ * on a token, a millisecond and a counter value at once.
+ */
+const PROCESS_TOKEN = randomUUID().slice(0, 8);
+let notifySeq = 0;
+
+function nextNotifyJobId(userId: string, type: string): string {
+  notifySeq = (notifySeq + 1) % 1_000_000;
+  return `notify:${userId}:${type}:${Date.now()}:${PROCESS_TOKEN}:${notifySeq}`;
+}
+
+/**
  * Queue an in-app + Telegram notification.
  * Notification delivery is best-effort: it must never block or fail the
  * business operation that triggered it.
@@ -110,12 +129,37 @@ export async function enqueueWithdrawalProcessing(withdrawalId: string): Promise
 export async function enqueueNotification(payload: NotifyJob, delayMs = 0): Promise<void> {
   try {
     await notificationQueue.add(JOB.SEND_TELEGRAM_NOTIFICATION, payload, {
-      jobId: `notify:${payload.userId}:${payload.type}:${Date.now()}`,
+      jobId: nextNotifyJobId(payload.userId, payload.type),
       delay: delayMs,
       attempts: 2,
     });
   } catch (err) {
     logger.warn({ err, userId: payload.userId, type: payload.type }, 'failed to enqueue notification');
+  }
+}
+
+/**
+ * The same queue call, but reporting whether the job was actually accepted.
+ *
+ * Broadcast fan-out needs the answer: a recipient whose push could not be queued is not
+ * "pending", it is undelivered, and the broadcast job would otherwise sit at RUNNING for
+ * ever waiting for a delivery that was never going to happen. Ordinary callers keep using
+ * `enqueueNotification`, which is deliberately best-effort.
+ */
+export async function enqueueNotificationStrict(
+  payload: NotifyJob,
+  delayMs = 0,
+): Promise<boolean> {
+  try {
+    await notificationQueue.add(JOB.SEND_TELEGRAM_NOTIFICATION, payload, {
+      jobId: nextNotifyJobId(payload.userId, payload.type),
+      delay: delayMs,
+      attempts: 2,
+    });
+    return true;
+  } catch (err) {
+    logger.warn({ err, userId: payload.userId, type: payload.type }, 'failed to enqueue notification');
+    return false;
   }
 }
 

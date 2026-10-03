@@ -4,7 +4,8 @@ import { env } from '../config/env';
 import { buildPaginated, type Pagination } from '../utils/pagination';
 import { escapeHtml } from '../utils/format';
 import { sendUserMessage, sendUserMessageDetailed, type UserMessageSendResult } from '../utils/telegram';
-import { enqueueNotification } from '../queues/producers';
+import { enqueueNotification, enqueueNotificationStrict } from '../queues/producers';
+import { recordBroadcastOutcome } from './broadcast.service';
 import { notificationEmailHtml } from '../utils/mailer';
 import { withRetry } from '../utils/retry';
 import { sendTransactionalEmail } from './email.service';
@@ -102,6 +103,7 @@ export async function createNotification(input: NotifyInput): Promise<void> {
 export async function createBulkNotifications(inputs: NotifyInput[]): Promise<void> {
   if (!inputs.length) return;
 
+  let stored = true;
   try {
     await prisma.notification.createMany({
       data: inputs.map((i) => ({
@@ -114,14 +116,43 @@ export async function createBulkNotifications(inputs: NotifyInput[]): Promise<vo
       })),
     });
   } catch (err) {
+    stored = false;
     logger.error({ err, count: inputs.length }, 'failed to persist bulk notifications');
   }
 
-  await Promise.all(
+  if (!stored) {
+    // Do NOT queue the pushes.
+    //
+    // The row is the record of the notification; Telegram is the delivery of it. Sending
+    // the push anyway produced a user who received a message the panel's history had no
+    // trace of, which is the one state that cannot be reconciled afterwards. The
+    // single-notification path above has always returned early here; the bulk path was
+    // the exception.
+    //
+    // A tracked broadcast recipient needs more than "skip": it is one of the rows whose
+    // PENDING state decides whether the whole broadcast is finished, so it is recorded as
+    // FAILED with the reason. Left PENDING it would hold the job at RUNNING for ever.
+    for (const i of inputs) {
+      if (!i.broadcastJobId || !i.broadcastRecipientId) continue;
+      await recordBroadcastOutcome({
+        jobId: i.broadcastJobId,
+        recipientId: i.broadcastRecipientId,
+        status: 'FAILED',
+        error: 'the notification could not be stored, so nothing was sent',
+      });
+    }
+    return;
+  }
+
+  // Each push is queued individually and its result inspected, because a recipient whose
+  // push the queue rejected is not pending — it is undelivered, and the broadcast has to
+  // say so instead of waiting for it.
+  const results = await Promise.all(
     inputs
       .filter((i) => !i.silent)
-      .map((i) =>
-        enqueueNotification({
+      .map(async (i) => ({
+        input: i,
+        queued: await enqueueNotificationStrict({
           userId: i.userId,
           type: i.type,
           title: i.title,
@@ -133,8 +164,18 @@ export async function createBulkNotifications(inputs: NotifyInput[]): Promise<vo
             ? { broadcastJobId: i.broadcastJobId, broadcastRecipientId: i.broadcastRecipientId }
             : {}),
         }),
-      ),
+      })),
   );
+
+  for (const { input, queued } of results) {
+    if (queued || !input.broadcastJobId || !input.broadcastRecipientId) continue;
+    await recordBroadcastOutcome({
+      jobId: input.broadcastJobId,
+      recipientId: input.broadcastRecipientId,
+      status: 'FAILED',
+      error: 'the Telegram push could not be queued',
+    });
+  }
 }
 
 /**
@@ -181,11 +222,20 @@ export async function deliverToTelegram(payload: {
     throw new Error('telegram notification was not delivered after retries');
   }
 
-  await prisma.notification
-    .updateMany({
-      // Match the exact notification this push mirrors (title + body), not
-      // merely every undelivered row of the same type — a type-only filter
-      // marked unrelated notifications of that type as delivered.
+  // Exactly ONE row, chosen by id.
+  //
+  // `updateMany` could not express "the notification this push belongs to" — its filter is
+  // (user, type, title, body, undelivered), so two identical notifications of the same type
+  // sharing a title and body were both marked delivered as soon as one push succeeded: the
+  // second was reported as delivered while its own push was still queued, or never queued
+  // at all. Selecting the oldest matching row and updating it by id makes each push account
+  // for exactly one notification, and two copies still resolve one-for-one.
+  //
+  // (Title + body remain in the filter rather than being dropped: they are what identifies
+  // the notification absent an id in the payload, and a type-only filter marked unrelated
+  // notifications of that type as delivered.)
+  const mirror = await prisma.notification
+    .findFirst({
       where: {
         userId: payload.userId,
         type: payload.type as NotificationType,
@@ -193,14 +243,27 @@ export async function deliverToTelegram(payload: {
         body: payload.body,
         delivered: false,
       },
-      data: { delivered: true, sentAt: new Date() },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       logger.warn(
         { err, userId: payload.userId, type: payload.type },
-        'could not mark notification as delivered',
+        'could not find the notification to mark as delivered',
       );
+      return null;
     });
+
+  if (mirror) {
+    await prisma.notification
+      .update({ where: { id: mirror.id }, data: { delivered: true, sentAt: new Date() } })
+      .catch((err: unknown) => {
+        logger.warn(
+          { err, notificationId: mirror.id, userId: payload.userId },
+          'could not mark notification as delivered',
+        );
+      });
+  }
 
   return true;
 }

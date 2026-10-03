@@ -262,6 +262,8 @@ export const DeliveryErrorCode = {
   BUDGET_EXHAUSTED: 'BUDGET_EXHAUSTED',
   CHANNEL_SUSPENDED: 'CHANNEL_SUSPENDED',
   PUBLISHER_REJECTED: 'PUBLISHER_REJECTED',
+  /** A post-guarding policy check could not be evaluated — the post was not published. */
+  POLICY_CHECK_UNAVAILABLE: 'POLICY_CHECK_UNAVAILABLE',
   UNKNOWN: 'UNKNOWN',
 } as const;
 export type DeliveryErrorCode = (typeof DeliveryErrorCode)[keyof typeof DeliveryErrorCode];

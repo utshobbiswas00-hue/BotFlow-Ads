@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import dns from 'node:dns/promises';
 import axios from 'axios';
 import { prisma } from '../db/prisma';
 import { cacheGet, cacheSet } from '../db/redis';
@@ -97,6 +98,100 @@ export function isPrivateOrInternalHost(host: string): boolean {
   }
 
   return isPrivateIpv4(h);
+}
+
+/**
+ * What a hostname currently resolves to, and whether that is safe to dial.
+ *
+ * The literal-host checks above can only judge what was typed. A public name that
+ * resolves into the private network — attacker-controlled DNS, or a name that simply
+ * points inward — passes every one of them, and the outbound request then reaches
+ * something it must never reach. This is the check that has to happen before the
+ * connection, not before the string.
+ *
+ * `unresolved` is deliberately distinct from `internal`: a name that cannot be resolved
+ * is unverifiable (the request would fail on its own), while a name that resolves inward
+ * is a refusal. The first must never hard-block a legitimate advertiser whose DNS is
+ * having a bad minute; the second must never be fetched at all.
+ */
+export type HostAddressCheck =
+  | { ok: true; addresses: string[] }
+  | { ok: false; reason: 'internal'; addresses: string[] }
+  | { ok: false; reason: 'unresolved'; addresses: [] };
+
+export async function resolveHostAddresses(hostname: string): Promise<HostAddressCheck> {
+  const host = String(hostname ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+
+  if (!host) return { ok: false, reason: 'unresolved', addresses: [] };
+  if (isPrivateOrInternalHost(host)) return { ok: false, reason: 'internal', addresses: [] };
+  // An IP literal needs no round trip and every address it yields is itself.
+  if (isIpLiteral(host)) return { ok: true, addresses: [host] };
+
+  let records: { address: string; family: number }[];
+  try {
+    records = await dns.lookup(host, { all: true, verbatim: true });
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, host }, 'destination could not be resolved');
+    return { ok: false, reason: 'unresolved', addresses: [] };
+  }
+  if (records.length === 0) return { ok: false, reason: 'unresolved', addresses: [] };
+
+  const addresses = records.map((r) => r.address);
+  // EVERY answer has to be public. Accepting the set because one member is public would
+  // leave the request free to be pinned — or re-resolved — onto the private member.
+  if (addresses.some((a) => isPrivateOrInternalHost(a))) {
+    return { ok: false, reason: 'internal', addresses };
+  }
+  return { ok: true, addresses };
+}
+
+/**
+ * A `lookup` that can only hand back the addresses already vetted above.
+ *
+ * Validating and then connecting separately leaves the gap a rebinding resolver needs:
+ * the name is public when it is checked and private when it is dialled. Pinning the
+ * vetted answers to the request closes that window rather than narrowing it.
+ */
+export type PinnedLookup = (
+  hostname: string,
+  options: object,
+  callback: (err: Error | null, address?: unknown, family?: number) => void,
+) => void;
+
+/**
+ * axios declares `lookup` against its own `LookupAddress`, which is structurally this
+ * but nominally different (its `family` is a narrower union). Declaring the shape here
+ * and crossing at the boundary once keeps the assignment local instead of duplicating
+ * axios's private types.
+ */
+type AxiosLookupOption = NonNullable<Parameters<typeof axios.head>[1]>['lookup'];
+
+export function pinnedLookup(addresses: string[]): PinnedLookup {
+  const familyOf = (address: string): number => (address.includes(':') ? 6 : 4);
+  return (_hostname, options, callback) => {
+    const first = addresses[0];
+    if (!first) {
+      callback(new Error('no vetted address to connect to'));
+      return;
+    }
+    // Node calls `lookup(hostname, options, cb)`. The two-argument form is
+    // `dns.lookup`'s own (hostname, cb) shorthand, which some agents use.
+    if (typeof options === 'function') {
+      (options as (err: Error | null, address: string, family: number) => void)(null, first, familyOf(first));
+      return;
+    }
+    if ((options as { all?: boolean }).all) {
+      callback(
+        null,
+        addresses.map((address) => ({ address, family: familyOf(address) })),
+      );
+      return;
+    }
+    callback(null, first, familyOf(first));
+  };
 }
 
 /**
@@ -233,6 +328,21 @@ async function followRedirectChain(
   let current = start;
 
   for (let hop = 1; hop <= MAX_REDIRECT_HOPS; hop++) {
+    // Resolve THIS hop before dialling it, and hand the request the vetted addresses so
+    // it cannot be pointed somewhere else between the check and the connection.
+    const resolution = await resolveHostAddresses(current.hostname);
+    if (!resolution.ok) {
+      if (resolution.reason === 'internal') {
+        hard('destination resolves to a private, loopback, link-local or internal address');
+        // Already hard-blocked: do not complete this hop's request.
+        return current;
+      }
+      // Unresolvable is merely unverifiable — same treatment as any other network
+      // failure above, and never a hard block.
+      review('destination could not be resolved');
+      return current;
+    }
+
     let location: string | undefined;
     try {
       const res = await axios.head(current.toString(), {
@@ -240,6 +350,7 @@ async function followRedirectChain(
         timeout: HTTP_TIMEOUT_MS,
         validateStatus: () => true,
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BotFlowLinkCheck/1.0)' },
+        lookup: pinnedLookup(resolution.addresses) as AxiosLookupOption,
       });
       const loc = res.headers?.location;
       const isRedirect = res.status >= 300 && res.status < 400;

@@ -215,6 +215,18 @@ export const processor: Processor<NotificationJobData> = async (job) => {
               : {}),
           })),
         );
+
+        // Re-read the counters now that the fan-out has recorded what it could and could
+        // not queue. Without this the job kept whatever `markBroadcastRunning` had written
+        // and stayed RUNNING for ever when a recipient's push never got queued — the
+        // per-recipient tracking only recomputes on a delivery outcome, and a recipient
+        // that never reached delivery had none.
+        if (broadcastJobId) {
+          await recomputeBroadcastJob(broadcastJobId).catch((err) =>
+            log.error({ err, broadcastJobId }, 'failed to finalise broadcast after fan-out'),
+          );
+        }
+
         log.info({ jobId: job.id, audience, recipients: list.length }, 'user broadcast fanned out');
         return;
       }

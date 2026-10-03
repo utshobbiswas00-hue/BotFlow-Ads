@@ -7,7 +7,7 @@ import { CHANNEL_SORT_KEYS, adminChannelAction, listChannelsAdmin } from '../../
 import { blockedAdsSummary } from '../../services/moderation.service';
 import { requirePermission } from '../../middleware/adminAuth';
 import { AppError } from '../../utils/errors';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
 
 export const channelRouter = Router();
@@ -61,7 +61,7 @@ channelRouter.get('/', requirePermission('channels.view'), validate({ query: cha
 channelRouter.post('/action', requirePermission('channels.manage'), validate({ body: adminChannelActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof adminChannelActionSchema>;
-    const data = await adminChannelAction(adminId(req), {
+    const data = await adminChannelAction(adminUserId(req), {
       channelId: body.channelId,
       action: body.action,
       note: body.note ?? undefined,

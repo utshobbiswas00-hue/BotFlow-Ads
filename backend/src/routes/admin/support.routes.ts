@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { validate } from '../../middleware/validate';
 import { adminReplyTicket, getTicketAdmin, listTicketsAdmin, setTicketStatus } from '../../services/ticket.service';
 import { requirePermission } from '../../middleware/adminAuth';
-import { adminId, idParams, respondOk } from './common';
+import { adminUserId, idParams, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
 
 export const supportRouter = Router();
@@ -52,7 +52,7 @@ supportRouter.get('/tickets/:id', requirePermission('tickets.view'), validate({ 
 supportRouter.post('/tickets/:id/reply', requirePermission('tickets.manage'), validate({ params: idParams, body: ticketReplySchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof ticketReplySchema>;
-    const data = await adminReplyTicket(adminId(req), req.params.id, body.body);
+    const data = await adminReplyTicket(adminUserId(req), req.params.id, body.body);
     respondOk(res, data);
   } catch (err) {
     next(err);
@@ -63,7 +63,7 @@ supportRouter.post('/tickets/:id/reply', requirePermission('tickets.manage'), va
 supportRouter.post('/tickets/:id/status', requirePermission('tickets.manage'), validate({ params: idParams, body: ticketStatusSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof ticketStatusSchema>;
-    const data = await setTicketStatus(adminId(req), req.params.id, body.status);
+    const data = await setTicketStatus(adminUserId(req), req.params.id, body.status);
     respondOk(res, data);
   } catch (err) {
     next(err);

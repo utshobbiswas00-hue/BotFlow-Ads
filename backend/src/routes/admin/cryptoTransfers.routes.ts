@@ -11,7 +11,7 @@ import {
   scannableNetworks,
 } from '../../services/cryptoDeposit.service';
 import { requirePermission } from '../../middleware/adminAuth';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 
 /**
  * The crypto deposit queue.
@@ -113,7 +113,7 @@ cryptoTransfersRouter.post(
     try {
       const { id } = req.params as unknown as { id: string };
       const { reason } = req.body as { reason: string };
-      respondOk(res, await ignoreTransfer(adminId(req), id, reason));
+      respondOk(res, await ignoreTransfer(adminUserId(req), id, reason));
     } catch (err) {
       next(err);
     }

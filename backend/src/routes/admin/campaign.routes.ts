@@ -6,7 +6,7 @@ import { validate } from '../../middleware/validate';
 import { CAMPAIGN_SORT_KEYS, adminCampaignAction, listCampaignsAdmin } from '../../services/admin.service';
 import { requirePermission } from '../../middleware/adminAuth';
 import { AppError } from '../../utils/errors';
-import { adminId, respondOk } from './common';
+import { adminUserId, respondOk } from './common';
 import { getPagination } from '../../utils/pagination';
 
 export const campaignRouter = Router();
@@ -64,7 +64,7 @@ campaignRouter.get('/', requirePermission('campaigns.view'), validate({ query: c
 campaignRouter.post('/action', requirePermission('campaigns.manage'), validate({ body: adminCampaignActionSchema }), async (req, res, next) => {
   try {
     const body = req.body as z.infer<typeof adminCampaignActionSchema>;
-    const data = await adminCampaignAction(adminId(req), {
+    const data = await adminCampaignAction(adminUserId(req), {
       campaignId: body.campaignId,
       action: body.action,
       note: body.note ?? undefined,

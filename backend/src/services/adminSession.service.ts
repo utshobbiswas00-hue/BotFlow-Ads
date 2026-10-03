@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { redis } from '../db/redis';
+import { AppError } from '../utils/errors';
 
 /**
  * Server-side session store for the staff panel.
@@ -86,6 +87,31 @@ function usingMemory(): boolean {
   return redis.status !== 'ready';
 }
 
+/**
+ * Whether a session that only this process can see must be refused.
+ *
+ * True in production, where more than one API instance is the norm and an invisible
+ * session shows up as a random sign-out on the next request. Development and test keep
+ * the fallback: one process, no Redis, and a panel that still works is the point.
+ *
+ * `ADMIN_SESSION_ALLOW_MEMORY_FALLBACK=true` overrides it, for a production deployment
+ * that genuinely runs a single instance and would rather stay usable than lock out.
+ *
+ * Read from the environment on each call rather than from the exported `isProd`
+ * constant, so the decision can be tested (and so a process that changes NODE_ENV in a
+ * harness is not silently grandfathered).
+ */
+function refusesMemorySessions(): boolean {
+  if (allowMemoryFallback()) return false;
+  return process.env.NODE_ENV === 'production';
+}
+
+function allowMemoryFallback(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.ADMIN_SESSION_ALLOW_MEMORY_FALLBACK ?? '').toLowerCase(),
+  );
+}
+
 function noteFallback(): void {
   if (warnedAboutFallback) return;
   warnedAboutFallback = true;
@@ -127,6 +153,22 @@ export async function createSession(input: {
   const key = sessionKey(sid);
 
   if (usingMemory()) {
+    // Refuse rather than issue a session only this container knows about.
+    //
+    // The fallback below was warning-only, and the warning understated it: with more
+    // than one API instance the session is unknown to the others, so the next request
+    // that lands elsewhere is answered 401 and the operator is signed out at random.
+    // A clear "try again in a moment" is a better answer than a session that appears
+    // to work and then silently isn't there. Set
+    // ADMIN_SESSION_ALLOW_MEMORY_FALLBACK=true to accept that trade-off deliberately
+    // (single instance, or a development machine with no Redis).
+    if (refusesMemorySessions()) {
+      logger.error('admin session: refusing to create a session while redis is unavailable');
+      throw new AppError(
+        'The admin panel cannot start a session right now. Please try again in a moment.',
+        503,
+      );
+    }
     noteFallback();
     memorySweep();
     memory.set(key, { record, expiresAtMs: Date.now() + ttl * 1000 });

@@ -9,7 +9,7 @@ import { prisma } from '../../db/prisma';
 import { recordAudit } from '../../services/audit.service';
 import { ConflictError, NotFoundError } from '../../utils/errors';
 import { buildPaginated, getPagination } from '../../utils/pagination';
-import { adminId, idParams, respondOk } from './common';
+import { adminUserId, idParams, respondOk } from './common';
 
 /**
  * Admin "Blocked channels" + "Blocked ad posts" surface (spec §46–§48).
@@ -197,7 +197,7 @@ blockedRouter.post(
       });
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         actorType: 'ADMIN',
         action: existing ? 'CHANNEL_BLOCK_REAFFIRMED' : 'CHANNEL_BLOCK_ADDED',
         targetType: 'CHANNEL',
@@ -228,7 +228,7 @@ blockedRouter.delete(
       await prisma.publisherBlocklist.delete({ where: { id: entry.id } });
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         actorType: 'ADMIN',
         action: 'CHANNEL_BLOCK_REMOVED',
         targetType: 'CHANNEL',
@@ -408,7 +408,7 @@ blockedRouter.post(
       });
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         actorType: 'ADMIN',
         action: 'AD_POST_BLOCKED',
         targetType: 'AD_POST',
@@ -473,7 +473,7 @@ blockedRouter.delete(
       });
 
       await recordAudit({
-        actorId: adminId(req),
+        actorId: adminUserId(req),
         actorType: 'ADMIN',
         action: 'AD_POST_UNBLOCKED',
         targetType: 'AD_POST',

@@ -197,7 +197,13 @@ export const adminCampaignActionSchema = z.object({
 
 export const adminChannelActionSchema = z.object({
   channelId: z.string().min(1),
-  action: z.enum(['APPROVE', 'REJECT', 'SUSPEND', 'REACTIVATE']),
+  // VERIFY asks Telegram what the bot can actually do in the channel and rewrites the
+  // permission snapshot, instead of acting on a snapshot that may be stale. It exists
+  // because the snapshot is written by the `my_chat_member` push, which never arrives if
+  // the webhook was misconfigured while the bot was added: the channel then looks exactly
+  // like "the bot is not an admin", APPROVE is refused, and there was no way to re-ask.
+  // See adminChannelAction and channel.service.ts:verifyChannel.
+  action: z.enum(['APPROVE', 'REJECT', 'SUSPEND', 'REACTIVATE', 'VERIFY']),
   note: z.string().max(500).optional().nullable(),
 });
 

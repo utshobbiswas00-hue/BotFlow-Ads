@@ -17,7 +17,7 @@ import {
   rejectCampaign,
   setCampaignStatus,
 } from './campaign.service';
-import { CHANNEL_SELECT } from './channel.service';
+import { CHANNEL_SELECT, verifyChannel } from './channel.service';
 import { createNotification } from './notification.service';
 import { postLedger, ref } from './transaction.service';
 
@@ -798,7 +798,7 @@ export async function adminCampaignAction(
  *  Channel actions
  * ------------------------------------------------------------------ */
 
-export type AdminChannelAction = 'APPROVE' | 'REJECT' | 'SUSPEND' | 'REACTIVATE';
+export type AdminChannelAction = 'APPROVE' | 'REJECT' | 'SUSPEND' | 'REACTIVATE' | 'VERIFY';
 
 export interface AdminChannelActionInput {
   channelId: string;
@@ -829,6 +829,19 @@ export async function adminChannelAction(
   let cancelledJobs: number | undefined;
 
   switch (action) {
+    case 'VERIFY': {
+      // Ask Telegram directly rather than trusting the snapshot, and let `verifyChannel`
+      // write the answer: it already owns the whole rule — it records the rights it
+      // observes, promotes PENDING or ATTENTION_REQUIRED to APPROVED when they are really
+      // there, and demotes an APPROVED channel that has lost them.
+      //
+      // Without it, a merely stale snapshot is indistinguishable from a bot that is
+      // genuinely not an admin: APPROVE is refused, the message points at the owner, and
+      // an operator has no way to re-ask Telegram.
+      await verifyChannel(channelId);
+      break;
+    }
+
     case 'APPROVE': {
       // The owner can now submit for review before the bot is an admin (see
       // channel.service.ts:addChannel) — approving it here anyway would

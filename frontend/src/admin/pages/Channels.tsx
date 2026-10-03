@@ -28,6 +28,7 @@ import {
   CHANNEL_STATUSES,
   channelActionsFor,
   channelApproveBlockedReason,
+  channelNeedsRightsRecheck,
   statusOptions,
 } from '../lib/actions';
 import { useAdminSession } from '../lib/session';
@@ -45,6 +46,7 @@ const ACTION_LABELS: Record<string, string> = {
   REJECT: 'Reject',
   SUSPEND: 'Suspend',
   REACTIVATE: 'Reactivate',
+  VERIFY: 'Re-check rights',
 };
 
 export function AdminChannelsPage() {
@@ -220,6 +222,34 @@ export function AdminChannelsPage() {
           run: (values) => channelAction(c.id, a, values.note),
           successMessage: `Channel ${(ACTION_LABELS[a] ?? a).toLowerCase()}d`,
         }));
+
+        // Offered exactly when the snapshot says the bot cannot post — the case where the
+        // operator is stuck (APPROVE refused, the message pointing at somebody else) and
+        // the snapshot may simply be stale. Asking Telegram is cheap, and when the rights
+        // really are there `verifyChannel` moves the channel to APPROVED on its own, so
+        // this is not an override: it re-asks the question.
+        if (channelNeedsRightsRecheck(c)) {
+          actions.push({
+            key: 'VERIFY',
+            label: ACTION_LABELS.VERIFY,
+            confirmTitle: 'Ask Telegram about the bot rights in this channel?',
+            confirmDescription:
+              "The bot's administrator status and post rights are read from Telegram now and saved. " +
+              'If the bot can post, the channel moves to APPROVED straight away.',
+            fields: [
+              {
+                name: 'note',
+                label: 'Note',
+                type: 'textarea',
+                required: false,
+                hint: 'Optional. Recorded in the audit log with the result.',
+                maxLength: 500,
+              },
+            ],
+            run: (values) => channelAction(c.id, 'VERIFY', values.note),
+            successMessage: 'Rights refreshed',
+          });
+        }
 
         return <RowActions actions={actions} onDone={invalidate} />;
       },

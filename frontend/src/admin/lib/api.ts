@@ -219,7 +219,7 @@ export const listChannels = (q: ChannelsQuery = {}): Promise<Paginated<AdminChan
     status: q.status || undefined,
   });
 
-export type ChannelAction = 'APPROVE' | 'REJECT' | 'SUSPEND' | 'REACTIVATE';
+export type ChannelAction = 'APPROVE' | 'REJECT' | 'SUSPEND' | 'REACTIVATE' | 'VERIFY';
 
 export interface ChannelActionResult {
   channelId: string;

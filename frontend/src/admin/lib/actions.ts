@@ -111,6 +111,11 @@ const CHANNEL_ACTIONS: Record<ChannelAction, readonly string[]> = {
   REJECT: ['PENDING'],
   SUSPEND: ['PENDING', 'APPROVED', 'INACTIVE', 'ATTENTION_REQUIRED'],
   REACTIVATE: ['REJECTED', 'SUSPENDED', 'INACTIVE', 'ATTENTION_REQUIRED'],
+  // Deliberately no statuses: VERIFY is not a status transition, it is a question about
+  // the rights snapshot, which is orthogonal to status. The Channels page offers it when
+  // channelNeedsRightsRecheck() is true, so listing statuses here would show it on rows
+  // that do not need it — and twice on the rows that do.
+  VERIFY: [],
 };
 
 export function channelActionsFor(status: string): ChannelAction[] {
@@ -120,13 +125,24 @@ export function channelActionsFor(status: string): ChannelAction[] {
 }
 
 /** `adminChannelAction` refuses APPROVE unless the bot can actually post. */
+export function channelNeedsRightsRecheck(channel: {
+  botIsAdmin: boolean;
+  canPostMessages: boolean;
+}): boolean {
+  return !(channel.botIsAdmin && channel.canPostMessages);
+}
+
 export function channelApproveBlockedReason(channel: {
   botIsAdmin: boolean;
   canPostMessages: boolean;
   title: string;
 }): string | null {
-  if (channel.botIsAdmin && channel.canPostMessages) return null;
-  return `BotFlow Bot is not an administrator with post rights in "${channel.title}". Ask the owner to add the bot as an admin — the permission snapshot updates on its own, so the channel does not have to be re-submitted.`;
+  if (!channelNeedsRightsRecheck(channel)) return null;
+  // The old copy promised the snapshot "updates on its own". It does — via the
+  // `my_chat_member` push — but that push never arrives if the webhook was misconfigured
+  // when the bot was added, which is precisely the case this message is shown in. It now
+  // names the action that answers instead of promising something that may never come.
+  return `BotFlow Bot is not recorded as an administrator with post rights in "${channel.title}". If you have just added it, use "Re-check rights" to ask Telegram again. Otherwise ask the owner to add the bot.`;
 }
 
 /**

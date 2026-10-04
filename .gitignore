@@ -60,3 +60,4 @@ temp/
 
 # Render
 .render/
+.preserve-remote/

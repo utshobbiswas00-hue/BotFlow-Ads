@@ -34,6 +34,10 @@ export const qk = {
   channel: (id: string) => ['channels', id] as const,
   channelRequests: (id: string) => ['channels', id, 'requests'] as const,
   channelBlocklist: (id: string) => ['channels', id, 'blocklist'] as const,
+  // Onboarding (publisher 4-stage state) — caches the response from
+  // GET /api/channels/:id/onboarding separately from the channel itself so
+  // submission-mutation invalidates only this slice.
+  channelOnboarding: (id: string) => ['channels', id, 'onboarding'] as const,
   campaigns: ['campaigns'] as const,
   campaign: (id: string) => ['campaigns', id] as const,
   marketplace: ['marketplace'] as const,

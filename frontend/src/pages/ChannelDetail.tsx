@@ -27,6 +27,7 @@ import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { Select } from '../components/ui/Select';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { ChannelOnboardingCard } from '../components/ChannelOnboardingCard';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { ErrorState, EmptyState } from '../components/ui/EmptyState';
 import { Icon } from '../components/ui/icons';
@@ -213,7 +214,24 @@ export function ChannelDetailPage() {
       />
 
       <div className="space-y-4 mt-2">
-        {/* Ads-paused banner — visible at a glance when the publisher turned delivery off */}
+        {/* Publisher onboarding — the 4-stage card that walks the user through
+            the steps of getting the channel live (NO_ACCESS / ON_HOLD /
+            PENDING_REVIEW / NEEDS_GROWTH). Hidden once the channel is ACTIVE. */}
+        {id && (
+          <ChannelOnboardingCard
+            channelId={id}
+            snapshot={{
+              botHasAccess: Boolean(c.botIsAdmin && c.canPostMessages && c.canEditMessages),
+              meetsMarketplaceFloor: false,
+              publisherStage: 'ON_HOLD', // re-fetched by the card from /onboarding
+              status: c.status,
+              subscribers: c.subscriberCount ?? 0,
+              minSubscribers: 500,
+            }}
+          />
+        )}
+
+                {/* Ads-paused banner — visible at a glance when the publisher turned delivery off */}
         {c.acceptAds === false && (
           <div
             role="status"

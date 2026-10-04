@@ -9,5 +9,5 @@
     "declarationMap": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests", "prisma/seed.ts"]
+  "exclude": ["node_modules", "dist", "tests", "src/**/__tests__", "prisma/seed.ts"]
 }

@@ -346,6 +346,8 @@ model User {
   auditLogs           AuditLog[]
   clicks              Click[]
   subscriptions       Subscription[]
+  /// Persisted AI Assistant transcript (one row per user). See AiConversation.
+  aiConversation      AiConversation?
 
   /// Advertiser programmatic access. Both are revoked, never deleted, so an
   /// audit trail of what could reach the API survives revocation.
@@ -2040,4 +2042,26 @@ model ErrorLog {
   @@index([source, createdAt])
   @@index([level, createdAt])
   @@map("error_logs")
+}
+
+// ============================================================
+//  AI ASSISTANT
+// ============================================================
+
+/// Persisted AI Assistant transcript. One row per user; `messages` holds the
+/// full JSON array of turns (`AiMessage[]` — user / assistant / tool), oldest
+/// first. The row is created lazily on the first chat and appended to on every
+/// turn, so the assistant survives navigation and a reload without a server
+/// session. Kept as a single JSON column on purpose: the transcript is only
+/// ever read and written whole for one user, so a per-message table would add
+/// joins without adding a query the product needs.
+model AiConversation {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_conversations")
 }

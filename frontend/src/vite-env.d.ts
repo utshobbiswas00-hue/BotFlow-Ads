@@ -2,6 +2,11 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
+  /**
+   * '1' when a real LLM key is wired in. Absent/anything else means the AI
+   * assistant runs the deterministic tool-calling stub, and the widget says so.
+   */
+  readonly VITE_AI_LIVE?: string;
 }
 
 interface ImportMeta {

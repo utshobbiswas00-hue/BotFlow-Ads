@@ -598,3 +598,27 @@ export interface ChannelOnboarding {
   subscribers: number;
   minSubscribers: number;
 }
+
+/* ---------------------------------------------------------------
+ *  AI Assistant (GET /api/ai/history, POST /api/ai/chat).
+ *  The backend message is `AiMessage` (role includes 'tool'); the UI only
+ *  renders user/assistant turns, so `useAiChat` normalises to this shape.
+ * --------------------------------------------------------------- */
+
+export interface AiChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  ts: number;
+}
+
+export interface AiChatToolCall {
+  name: string;
+  args: unknown;
+  result: string;
+}
+
+export interface AiChatReply {
+  reply: string;
+  toolCalls: AiChatToolCall[];
+}

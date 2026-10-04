@@ -21,7 +21,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    // Integration files under tests/, plus the co-located DB-backed service
+    // tests under src/**/__tests__ that need the real database (for example
+    // src/services/__tests__/aiAssistant.service.test.ts). Those are excluded
+    // from the DB-free unit config, so they run here exactly once.
+    include: ['tests/**/*.test.ts', 'src/**/__tests__/**/*.test.ts'],
     globalSetup: ['./tests/setup/globalSetup.ts'],
     fileParallelism: false,
     pool: 'forks',

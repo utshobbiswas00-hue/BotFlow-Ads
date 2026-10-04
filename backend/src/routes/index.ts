@@ -21,6 +21,7 @@ import { apiKeyRouter } from './advertiserApi.routes';
 import { webhookEndpointsRouter } from './webhookEndpoints.routes';
 import { billingRouter } from './billing.routes';
 import { emailRouter } from './email.routes';
+import { aiRouter } from './ai.routes';
 
 /**
  * The user-facing API router — mounted under `/api` in app.ts.
@@ -53,6 +54,10 @@ router.use(settingsRouter);
 router.use(benefitsRouter);
 router.use(premiumRouter);
 router.use(policyRouter);
+
+// Floating AI Assistant (/api/ai/chat, /api/ai/history). Telegram-authenticated
+// like every other user route; the assistant persists its own transcript.
+router.use(aiRouter);
 
 // Programmatic access: key management (this file) and the key-authenticated
 // public surface (publicApi.routes.ts, mounted at the app root — it must NOT

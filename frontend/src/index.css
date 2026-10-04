@@ -260,3 +260,76 @@ input[type='number']::-webkit-inner-spin-button {
     display: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Floating AI Assistant.
+ *
+ * Mounted once in AppShell so it persists across route changes. The bubble is
+ * the brand blue (#0386FA). On phones the drawer is a full-width bottom sheet;
+ * from 640px up it becomes a fixed corner panel next to the bubble.
+ * --------------------------------------------------------------------------- */
+.bf-chat-bubble {
+  position: fixed;
+  right: 1rem;
+  bottom: 5.25rem; /* clears the fixed bottom nav */
+  z-index: 45;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 9999px;
+  background: #0386fa;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 25px rgba(3, 134, 250, 0.38);
+  transition: transform 0.12s ease;
+}
+
+.bf-chat-bubble:active {
+  transform: scale(0.94);
+}
+
+.bf-chat-drawer {
+  position: fixed;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--tg-theme-secondary-bg-color, #ffffff);
+  color: var(--tg-theme-text-color, #111827);
+  border-top-left-radius: 1rem;
+  border-top-right-radius: 1rem;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
+}
+
+.bf-chat-msg-user {
+  background: #0386fa;
+  color: #ffffff;
+}
+
+.bf-chat-msg-assistant {
+  background: rgb(var(--mut-rgb, 107 114 128) / 0.12);
+  color: var(--tg-theme-text-color, #111827);
+}
+
+@media (min-width: 640px) {
+  .bf-chat-bubble {
+    right: 1.5rem;
+    bottom: 1.5rem;
+  }
+
+  .bf-chat-drawer {
+    left: auto;
+    right: 1.5rem;
+    bottom: 1.5rem;
+    width: 24rem;
+    max-width: calc(100vw - 3rem);
+    height: 34rem;
+    max-height: calc(100vh - 3rem);
+    border-radius: 1rem;
+  }
+}

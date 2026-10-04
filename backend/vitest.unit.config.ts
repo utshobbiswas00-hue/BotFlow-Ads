@@ -16,6 +16,10 @@ export default defineConfig({
     // Co-located pure-logic unit tests live under src/**/__tests__; the older
     // tests/unit/*.test.ts files stay included so nothing silently stops running.
     include: ['tests/unit/**/*.test.ts', 'src/**/__tests__/**/*.test.ts'],
+    // The AI assistant service test drives the REAL Prisma client against a
+    // migrated database, so it belongs to the integration suite (vitest.config.ts),
+    // not to these DB-free unit tests with a dummy DATABASE_URL.
+    exclude: ['**/node_modules/**', '**/dist/**', 'src/services/__tests__/aiAssistant.service.test.ts'],
     fileParallelism: false,
     pool: 'forks',
     env: {

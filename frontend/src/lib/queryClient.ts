@@ -119,4 +119,6 @@ export const qk = {
   adminErrors: ['admin', 'errors'] as const,
   adminActivity: ['admin', 'activity'] as const,
   adminApiLogs: ['admin', 'api-logs'] as const,
+  // Floating AI Assistant transcript (shared cache so the widget renders it).
+  aiHistory: ['ai', 'history'] as const,
 };

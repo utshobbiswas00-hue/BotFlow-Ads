@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useTelegramUser } from '../../hooks/useTelegramUser';
 import { BottomNav } from './BottomNav';
+import { FloatingChatWidget } from '../ai/FloatingChatWidget';
 import { ToastContainer } from '../ui/Toast';
 import { PageSkeleton } from '../ui/Skeleton';
 import { ErrorState } from '../ui/EmptyState';
@@ -40,6 +41,11 @@ export function AppShell() {
         </main>
         {!isPending && !isError && <BottomNav />}
       </div>
+
+      {/* Sibling of <Outlet/> inside the shell, never inside a page: this is
+          what keeps the assistant (and an open drawer) alive while the route
+          changes underneath it. Rendered last so it floats over the nav. */}
+      <FloatingChatWidget />
     </div>
   );
 }

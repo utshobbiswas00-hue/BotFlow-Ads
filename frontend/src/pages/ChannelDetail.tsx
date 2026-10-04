@@ -13,7 +13,7 @@ import { api, errMsg } from '../lib/api';
 import { qk } from '../lib/queryClient';
 import type { ChannelDetail as ChannelDetailT } from '../lib/contracts';
 import { categoryLabel, compactNumber, formatDate, formatMoney, pricingLabel } from '../lib/format';
-import { useChannel, useInvalidateChannels, useVerifyChannel } from '../hooks/useChannels';
+import { useChannel, useInvalidateChannels } from '../hooks/useChannels';
 import { useAppConfig } from '../hooks/useTelegramUser';
 import { openTelegramLink } from '../lib/telegram';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -39,8 +39,9 @@ export function ChannelDetailPage() {
   const q = useChannel(id);
   const appConfig = useAppConfig();
 
-  // Keep the page in sync while an admin decision is pending. This only re-reads the
-  // stored record; it says nothing about the bot's rights (see the verify effect below).
+  // Keep the page in sync while Telegram is being updated. The backend
+  // automatically re-checks PENDING channels and promotes them once the bot
+  // has Post Messages permission.
   useEffect(() => {
     if (!id || q.data?.status !== 'PENDING') return;
     const timer = window.setInterval(() => {
@@ -49,63 +50,57 @@ export function ChannelDetailPage() {
     return () => window.clearInterval(timer);
   }, [id, q.data?.status, q.refetch]);
 
-  const verify = useVerifyChannel(id);
-  // Held in a ref so the polling effect below does not depend on the mutation object: a
-  // fresh identity each render would restart the effect, and restarting it asks Telegram
-  // again — a runaway loop against the Bot API.
-  const verifyNow = useRef<() => void>(() => undefined);
+  // Re-check the bot's live Telegram permissions: once when this page first
+  // has data for a channel that looks like it is missing access (not just
+  // while PENDING — also an APPROVED channel whose last-saved permission
+  // snapshot is stale, e.g. the bot was removed as admin afterwards, or the
+  // snapshot was simply never correct), and again whenever the tab regains
+  // visibility (the app's global refetchOnWindowFocus is off, so coming back
+  // from Telegram's native "add admin" flow would otherwise never re-check).
+  // A plain refetch only re-reads what the database already has; this asks
+  // Telegram directly, so the status badge and the "Missing permissions"
+  // banner can never disagree with each other for long.
+  //
+  // `verifiedForId` guards against two different bugs at once: firing before
+  // `q.data` has loaded on first mount (a `[id]`-only dependency array would
+  // run while `q.data` is still undefined, bail out, and then never run
+  // again since `id` itself never changes), and firing on every single
+  // render once data exists (a `[id, q.data]` array with no guard would
+  // re-verify after every refetch, including the one this effect itself
+  // triggers). The ref also backs the visibility listener so it always reads
+  // the latest fetch result instead of whatever was current when the
+  // listener was first attached.
+  const verifiedForId = useRef<string | null>(null);
+  const latestChannel = useRef(q.data);
+  latestChannel.current = q.data;
+
   useEffect(() => {
-    verifyNow.current = (): void => {
-      verify.mutate();
-    };
-  });
+    if (!id || !q.data) return;
+    if (verifiedForId.current === id) return;
+    if (q.data.botIsAdmin && q.data.canPostMessages) return;
+    verifiedForId.current = id;
+    api
+      .post(`/api/channels/${id}/verify`)
+      .then(() => q.refetch())
+      .catch(() => undefined); // best-effort — the manual "Open access" flow still works either way
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, q.data]);
 
-  // Whether the banner above is showing — i.e. whether the stored snapshot still says the
-  // bot cannot post here.
-  // Whether the banner above is showing. A missing flag (older backend, unset snapshot)
-  // is treated as "no" by negation — i.e. the banner STAYS up when we do not know the
-  // answer. That is the safe default: the publisher can only clear it once the bot is
-  // recorded with every right, and we never claim a channel is good when we have not been
-  // told so.
-  const needsAccess =
-    !!q.data &&
-    (!q.data.botIsAdmin || !q.data.canPostMessages || !q.data.canEditMessages || !q.data.canInviteUsers);
-
-  // The banner disappears only when the snapshot changes, and only `my_chat_member` (which
-  // needs a registered webhook) or a verify call changes it. Refetching alone re-read the
-  // same stale snapshot, so granting access left the banner sitting there. Ask Telegram
-  // instead: once as the page opens, again whenever it returns to the foreground — that is
-  // precisely the moment the owner comes back from the Telegram admin screen — then a
-  // bounded number of retries. Bounded, because a channel whose owner never finishes the
-  // steps would otherwise poll the Bot API for ever.
   useEffect(() => {
-    if (!id || !needsAccess) return;
-
-    const kick = (): void => {
-      if (document.visibilityState === 'visible') verifyNow.current();
+    if (!id) return;
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      const c = latestChannel.current;
+      if (c?.botIsAdmin && c?.canPostMessages) return;
+      api
+        .post(`/api/channels/${id}/verify`)
+        .then(() => q.refetch())
+        .catch(() => undefined);
     };
-
-    kick();
-    const onReturn = (): void => kick();
-    document.addEventListener('visibilitychange', onReturn);
-    window.addEventListener('focus', onReturn);
-
-    let ticks = 0;
-    const timer = window.setInterval(() => {
-      ticks += 1;
-      if (ticks > 12) {
-        window.clearInterval(timer);
-        return;
-      }
-      kick();
-    }, 10_000);
-
-    return () => {
-      document.removeEventListener('visibilitychange', onReturn);
-      window.removeEventListener('focus', onReturn);
-      window.clearInterval(timer);
-    };
-  }, [id, needsAccess]);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -229,9 +224,11 @@ export function ChannelDetailPage() {
           </div>
         )}
 
-        {/* Bot-access banner. Telegram runs the permission UI; the panel shows the state
-            it last stored, and the verify effect above keeps asking until it agrees. */}
-        {(!c.botIsAdmin || !c.canPostMessages || !c.canEditMessages || !c.canInviteUsers) && (
+        {/* Bot-access banner. No PENDING/"on hold" holding state: the
+            instant the bot has posting rights, the my_chat_member webhook
+            (bot/handlers/myChatMember.ts) approves the channel and this
+            banner is gone for good — never shown again for this channel. */}
+        {(!c.botIsAdmin || !c.canPostMessages) && (
           <Card className="border-warn/40 bg-warn/10 space-y-3">
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warn/20 text-warn">
@@ -245,21 +242,16 @@ export function ChannelDetailPage() {
             <ul className="space-y-1.5 text-sm">
               <li className="flex items-center gap-2">
                 <Icon name={c.botIsAdmin ? 'check' : 'shield'} size={14} className={c.botIsAdmin ? 'text-ok' : 'text-mute'} />
-                Permission to edit messages
-              </li>
-              <li className="flex items-center gap-2">
-                <Icon name={c.canInviteUsers ? 'check' : 'shield'} size={14} className={c.canInviteUsers ? 'text-ok' : 'text-mute'} />
-                Permission to invite users
+                BotFlow Bot is an administrator
               </li>
               <li className="flex items-center gap-2">
                 <Icon name={c.canPostMessages ? 'check' : 'shield'} size={14} className={c.canPostMessages ? 'text-ok' : 'text-mute'} />
-                Permission to post messages
+                "Post messages" permission enabled
               </li>
             </ul>
             <p className="text-xs text-mute leading-relaxed">
-              Open your channel → Administrators → add <b>BotFlow Bot</b> → turn on
-              <b> Post messages</b>, <b>Edit messages</b> and <b>Invite users via link</b>.
-              Come back here and this banner clears on its own once Telegram reports the permissions.
+              Open your channel → Administrators → add <b>BotFlow Bot</b> → turn on <b>Post messages</b>.
+              Approval happens automatically within about a second of Telegram reporting the permission.
             </p>
             <Button
               full
@@ -270,32 +262,25 @@ export function ChannelDetailPage() {
                   showToast('error', 'Could not open Telegram right now — try again in a moment');
                   return;
                 }
-                const rights = ['post_messages', 'edit_messages', 'invite_users'].join(',');
+                // Matches "Manage Messages 3/3" (post+edit+delete) + "Invite Users via
+                // Link" + "Ban Users" pre-toggled ON in Telegram's own admin-rights screen.
+                // Telegram's own deep-link syntax (core.telegram.org/api/links,
+                // "Group/channel bot links") requires a literal '+' between rights,
+                // NOT a comma — this is not standard URL encoding, it is Telegram's
+                // own mini-syntax for this one query value, so the '+' must survive
+                // unescaped in the final URL.
+                const rights = [
+                  'post_messages',
+                  'edit_messages',
+                  'delete_messages',
+                  'invite_users',
+                  'restrict_members',
+                ].join('+');
                 openTelegramLink(`https://t.me/${appConfig.data.botUsername}?startchannel&admin=${rights}`);
               }}
             >
               Open access
             </Button>
-
-            {/* The way out when Telegram's own notification never reaches us: ask the
-                backend to read the rights again. Without this there is nothing the owner
-                can do from here if the banner outlives the permission. */}
-            <Button
-              full
-              variant="secondary"
-              size="sm"
-              loading={verify.isPending}
-              icon={<Icon name="refresh" size={14} />}
-              onClick={() => verify.mutate()}
-            >
-              Re-check access
-            </Button>
-            {verify.isSuccess && verify.data?.permissionLost && (
-              <p className="text-xs text-mute">
-                Telegram still reports no posting rights in this channel. Finish the steps above,
-                then re-check.
-              </p>
-            )}
           </Card>
         )}
 

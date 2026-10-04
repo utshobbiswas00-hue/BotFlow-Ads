@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAppConfig } from '../hooks/useTelegramUser';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { showToast } from '../store/uiStore';
 import { qk } from '../lib/queryClient';
@@ -61,7 +61,27 @@ export function ChannelOnboardingCard({
     // mismatch is repaired on the next refetch.
     initialData: snapshot ?? undefined,
     staleTime: 30_000,
+    // Re-poll while the publisher is mid-flow: myChatMember moves the status
+    // from PENDING → READY_FOR_REVIEW when the bot is granted permissions in
+    // Telegram, but the webhook can lag by a few seconds. A 5s poll keeps the
+    // "Open access" button disappearing promptly without hammering the API.
+    refetchInterval: (q) => {
+      const stage = q.state.data?.publisherStage;
+      return stage === 'NO_ACCESS' || stage === 'ON_HOLD' || stage === 'PENDING_REVIEW' ? 5_000 : false;
+    },
   });
+
+  // When the publisher comes back from Telegram (where they granted bot
+  // permissions), refetch immediately so the card flips from NO_ACCESS to
+  // ON_HOLD without waiting for the next 5s tick.
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      void onboarding.refetch();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [onboarding]);
 
   const submit = useMutation({
     mutationFn: (): Promise<unknown> =>

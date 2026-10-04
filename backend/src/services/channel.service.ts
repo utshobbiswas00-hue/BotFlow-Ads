@@ -491,17 +491,25 @@ export async function getChannelOnboardingStatus(channelId: string): Promise<Cha
       publisherStage = 'NO_ACCESS';
       break;
     case 'READY_FOR_REVIEW':
+      // Bot has every right it needs; publisher has not submitted yet.
       publisherStage = 'ON_HOLD';
       break;
     case 'INACTIVE':
+      // Publisher submitted and is now waiting on a moderator.
       publisherStage = 'PENDING_REVIEW';
       break;
     case 'APPROVED':
       publisherStage = channel.subscriberCount >= settingValue ? 'ACTIVE' : 'NEEDS_GROWTH';
       break;
+    case 'ATTENTION_REQUIRED':
+      // The bot lost a permission after approval. The publisher has to
+      // re-grant it — same UX as PENDING, so re-use NO_ACCESS rather than
+      // SUSPENDED (which would block them with a "Channel suspended" card
+      // they cannot clear from the publisher side).
+      publisherStage = 'NO_ACCESS';
+      break;
     case 'SUSPENDED':
     case 'REJECTED':
-    case 'ATTENTION_REQUIRED':
       publisherStage = 'SUSPENDED';
       break;
     default:

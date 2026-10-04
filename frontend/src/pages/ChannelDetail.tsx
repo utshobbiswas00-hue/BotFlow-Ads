@@ -227,6 +227,8 @@ export function ChannelDetailPage() {
               status: c.status,
               subscribers: c.subscriberCount ?? 0,
               minSubscribers: 500,
+              username: c.username,
+              telegramChannelId: c.telegramChannelId,
             }}
           />
         )}
@@ -242,65 +244,14 @@ export function ChannelDetailPage() {
           </div>
         )}
 
-        {/* Bot-access banner. No PENDING/"on hold" holding state: the
-            instant the bot has posting rights, the my_chat_member webhook
-            (bot/handlers/myChatMember.ts) approves the channel and this
-            banner is gone for good — never shown again for this channel. */}
-        {(!c.botIsAdmin || !c.canPostMessages) && (
-          <Card className="border-warn/40 bg-warn/10 space-y-3">
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warn/20 text-warn">
-                <Icon name="alert" size={18} />
-              </span>
-              <div className="min-w-0">
-                <p className="font-semibold">Access to the channel</p>
-                <p className="text-xs text-mute">Missing permissions</p>
-              </div>
-            </div>
-            <ul className="space-y-1.5 text-sm">
-              <li className="flex items-center gap-2">
-                <Icon name={c.botIsAdmin ? 'check' : 'shield'} size={14} className={c.botIsAdmin ? 'text-ok' : 'text-mute'} />
-                BotFlow Bot is an administrator
-              </li>
-              <li className="flex items-center gap-2">
-                <Icon name={c.canPostMessages ? 'check' : 'shield'} size={14} className={c.canPostMessages ? 'text-ok' : 'text-mute'} />
-                "Post messages" permission enabled
-              </li>
-            </ul>
-            <p className="text-xs text-mute leading-relaxed">
-              Open your channel → Administrators → add <b>BotFlow Bot</b> → turn on <b>Post messages</b>.
-              Approval happens automatically within about a second of Telegram reporting the permission.
-            </p>
-            <Button
-              full
-              size="lg"
-              icon={<Icon name="shield" size={18} />}
-              onClick={() => {
-                if (!appConfig.data?.botUsername) {
-                  showToast('error', 'Could not open Telegram right now — try again in a moment');
-                  return;
-                }
-                // Matches "Manage Messages 3/3" (post+edit+delete) + "Invite Users via
-                // Link" + "Ban Users" pre-toggled ON in Telegram's own admin-rights screen.
-                // Telegram's own deep-link syntax (core.telegram.org/api/links,
-                // "Group/channel bot links") requires a literal '+' between rights,
-                // NOT a comma — this is not standard URL encoding, it is Telegram's
-                // own mini-syntax for this one query value, so the '+' must survive
-                // unescaped in the final URL.
-                const rights = [
-                  'post_messages',
-                  'edit_messages',
-                  'delete_messages',
-                  'invite_users',
-                  'restrict_members',
-                ].join('+');
-                openTelegramLink(`https://t.me/${appConfig.data.botUsername}?startchannel&admin=${rights}`);
-              }}
-            >
-              Open access
-            </Button>
-          </Card>
-        )}
+        {/* The old "Access to the channel" banner with its "Open access"
+            Telegram deep-link was removed in favour of the new
+            ChannelOnboardingCard, which now owns the publisher-facing state
+            machine. NO_ACCESS shows the per-permission checklist + the
+            "Re-check permissions" button; ON_HOLD shows the "Send to
+            moderation" button. The Telegram deep-link that opens the
+            admin-rights flow is rendered inside the card when the bot is
+            missing permissions (see ChannelOnboardingCard.tsx). */}
 
         {/* Header card */}
         <Card>

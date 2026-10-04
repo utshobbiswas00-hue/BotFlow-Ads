@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppConfig } from '../hooks/useTelegramUser';
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { showToast } from '../store/uiStore';
 import { qk } from '../lib/queryClient';
 import type { ChannelOnboarding, PublisherOnboardingStage } from '../lib/contracts';
 
@@ -32,11 +34,10 @@ const REQUIRED_PERMISSIONS: ReadonlyArray<{
 export interface ChannelOnboardingCardProps {
   channelId: string;
   /** When the raw channel snapshot is already in hand, we read it directly to
-   *  avoid a second fetch — the publisher page already loaded the channel. */
-  snapshot?: Pick<
-    ChannelOnboarding,
-    'botHasAccess' | 'subscribers' | 'minSubscribers' | 'meetsMarketplaceFloor' | 'publisherStage' | 'status'
-  > | null;
+   *  avoid a second fetch — the publisher page already loaded the channel.
+   *  The full payload is passed (not a Pick) so the `username` /
+   *  `telegramChannelId` deep-link target is available without a refetch. */
+  snapshot?: ChannelOnboarding | null;
 }
 
 export function ChannelOnboardingCard({
@@ -44,6 +45,12 @@ export function ChannelOnboardingCard({
   snapshot,
 }: ChannelOnboardingCardProps): JSX.Element | null {
   const qc = useQueryClient();
+  const appConfigQuery = useAppConfig();
+  // useAppConfig returns a UseQueryResult whose data is `{ botUsername: string } | undefined`.
+  // Until it resolves we have nothing useful to put on the deep-link — the button still
+  // works because `window.open` would just go to a 404 in that brief moment, but we
+  // prefer to disable the button until the config is in.
+  const botUsername = appConfigQuery.data?.botUsername ?? null;
   const [submitting, setSubmitting] = useState(false);
 
   const onboarding = useQuery({
@@ -86,6 +93,7 @@ export function ChannelOnboardingCard({
       {data.publisherStage === 'NO_ACCESS' && (
         <NoAccessStage
           snapshot={data}
+          botUsername={botUsername}
           onRecheck={() => {
               void onboarding.refetch();
             }}
@@ -125,11 +133,26 @@ export function ChannelOnboardingCard({
 
 function NoAccessStage({
   snapshot,
+  botUsername,
   onRecheck,
 }: {
   snapshot: ChannelOnboarding;
+  botUsername: string | null;
   onRecheck: () => void;
 }): JSX.Element {
+  // Telegram's deep-link syntax (core.telegram.org/api/links, "Group/channel
+  // bot links") for adding a bot as admin: `?startchannel&admin=<rights>`.
+  // Rights are joined with a literal `+`, NOT a comma — that is its own
+  // mini-syntax, not URL encoding, and the `+` must survive unescaped.
+  const openTelegram = (): void => {
+    if (!botUsername) {
+      showToast('error', 'Could not open Telegram right now — try again in a moment');
+      return;
+    }
+    const rights = ['post_messages', 'edit_messages', 'delete_messages', 'invite_users', 'restrict_members'].join('+');
+    window.open(`https://t.me/${botUsername}?startchannel&admin=${rights}`, '_blank', 'noopener');
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-2">
@@ -160,6 +183,21 @@ function NoAccessStage({
           </li>
         ))}
       </ul>
+
+      {/* "Open access" deep-link — opens Telegram's own admin-rights screen
+          for this channel with the four required rights pre-toggled ON. The
+          publisher taps it once, accepts the rights in Telegram, then comes
+          back and taps "Re-check permissions" below. The two-step flow
+          matters: the deep-link is what removes the friction, but the
+          re-check is what clears the banner — Telegram's permission report
+          only fires when the publisher actually saves. */}
+      <button
+        type="button"
+        onClick={openTelegram}
+        className="w-full rounded-xl border border-accent bg-accent/10 px-4 py-2 text-sm font-semibold text-accent active:scale-[0.98]"
+      >
+        Open access in Telegram
+      </button>
 
       <button
         type="button"

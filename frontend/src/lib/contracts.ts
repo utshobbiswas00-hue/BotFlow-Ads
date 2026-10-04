@@ -597,6 +597,10 @@ export interface ChannelOnboarding {
   status: string;
   subscribers: number;
   minSubscribers: number;
+  /** @username without leading `@`, or null for invite-link channels. */
+  username: string | null;
+  /** Telegram's numeric channel id — used as the deep-link fallback. */
+  telegramChannelId: string;
 }
 
 /* ---------------------------------------------------------------

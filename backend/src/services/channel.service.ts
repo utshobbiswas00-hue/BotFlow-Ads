@@ -458,6 +458,13 @@ export interface ChannelOnboardingStatus {
   subscribers: number;
   /** Required minimum — mirrored here so the publisher does not have to know the setting name. */
   minSubscribers: number;
+  /** Channel's @username on Telegram (without the leading @) — needed so the
+   *  client can build a deep-link straight to the channel's admin settings.
+   *  May be null for invite-link-only channels. */
+  username: string | null;
+  /** Telegram numeric id of the channel — used as the deep-link fallback when
+   *  no username is available. */
+  telegramChannelId: string;
 }
 
 /**
@@ -508,6 +515,8 @@ export async function getChannelOnboardingStatus(channelId: string): Promise<Cha
     status: channel.status,
     subscribers: channel.subscriberCount,
     minSubscribers: settingValue,
+    username: channel.username,
+    telegramChannelId: channel.telegramChannelId.toString(),
   };
 }
 

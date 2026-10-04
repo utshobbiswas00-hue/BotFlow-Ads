@@ -576,3 +576,25 @@ export interface AdminReportRow {
   status: string;
   createdAt: string;
 }
+
+
+/* ---------------------------------------------------------------
+ *  Channel onboarding — the publisher's 4-state view.
+ * --------------------------------------------------------------- */
+
+export type PublisherOnboardingStage =
+  | 'NO_ACCESS'
+  | 'ON_HOLD'
+  | 'PENDING_REVIEW'
+  | 'NEEDS_GROWTH'
+  | 'ACTIVE'
+  | 'SUSPENDED';
+
+export interface ChannelOnboarding {
+  publisherStage: PublisherOnboardingStage;
+  botHasAccess: boolean;
+  meetsMarketplaceFloor: boolean;
+  status: string;
+  subscribers: number;
+  minSubscribers: number;
+}

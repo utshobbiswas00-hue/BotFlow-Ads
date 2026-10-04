@@ -1,4 +1,5 @@
-import type { ChannelCategory, ChannelStatus } from '@prisma/client';
+import type { Channel, ChannelCategory, ChannelStatus } from '@prisma/client';
+import { AppError } from '../utils/errors';
 import {
   type MarketplaceSort,
   type PostingSchedule,
@@ -15,7 +16,8 @@ import {
 } from '../utils/errors';
 import { normaliseChannelUsername } from '../utils/format';
 import { buildPaginated, type Pagination } from '../utils/pagination';
-import { businessRules } from './settings.service';
+import { businessRules, getNumberSetting } from './settings.service';
+import { SETTING_KEYS } from '../config/constants';
 import { recordAudit } from './audit.service';
 import { enqueueChannelStatsRefresh } from '../queues/producers';
 import { logger } from '../config/logger';
@@ -442,6 +444,98 @@ export async function deleteChannel(ownerId: string, channelId: string): Promise
 /* ------------------------------------------------------------------
  *  Verification & permission monitoring
  * ------------------------------------------------------------------ */
+
+export interface ChannelOnboardingStatus {
+  /** What the publisher sees right now. */
+  publisherStage: 'NO_ACCESS' | 'ON_HOLD' | 'PENDING_REVIEW' | 'NEEDS_GROWTH' | 'ACTIVE' | 'SUSPENDED';
+  /** True when every Telegram permission the bot needs is recorded as granted. */
+  botHasAccess: boolean;
+  /** True when the channel passes the marketplace gate (subscribers, posts). */
+  meetsMarketplaceFloor: boolean;
+  /** The current DB status — for callers that need to switch on it. */
+  status: ChannelStatus;
+  /** The exact count the floor check was applied to. */
+  subscribers: number;
+  /** Required minimum — mirrored here so the publisher does not have to know the setting name. */
+  minSubscribers: number;
+}
+
+/**
+ * Publisher-facing status. Translates the underlying ChannelStatus + permission snapshot
+ * into the five-stage UI the channel page renders:
+ *   NO_ACCESS        — bot lacks some permission; show "Open access".
+ *   ON_HOLD          — bot has every permission; show "Send to moderation".
+ *   PENDING_REVIEW   — publisher submitted; admin has not approved; show "On hold".
+ *   NEEDS_GROWTH     — bot has access and the channel passed review, but subscribers /
+ *                      posts are below the marketplace floor (the "Almost there" card).
+ *   ACTIVE           — approved and over the floor; show the channel monetising normally.
+ *
+ * Centralising the mapping here keeps the UI dumb — it reads `publisherStage` and never
+ * has to know about the enum.
+ */
+export async function getChannelOnboardingStatus(channelId: string): Promise<ChannelOnboardingStatus> {
+  const channel = await prisma.channel.findUniqueOrThrow({ where: { id: channelId } });
+  const settingValue = await getNumberSetting(SETTING_KEYS.MIN_SUBSCRIBERS_FOR_MONETIZATION, 500);
+  const botHasAccess = Boolean(channel.botIsAdmin && channel.canPostMessages && channel.canEditMessages);
+
+  let publisherStage: ChannelOnboardingStatus['publisherStage'];
+  switch (channel.status) {
+    case 'PENDING':
+      publisherStage = 'NO_ACCESS';
+      break;
+    case 'READY_FOR_REVIEW':
+      publisherStage = 'ON_HOLD';
+      break;
+    case 'INACTIVE':
+      publisherStage = 'PENDING_REVIEW';
+      break;
+    case 'APPROVED':
+      publisherStage = channel.subscriberCount >= settingValue ? 'ACTIVE' : 'NEEDS_GROWTH';
+      break;
+    case 'SUSPENDED':
+    case 'REJECTED':
+    case 'ATTENTION_REQUIRED':
+      publisherStage = 'SUSPENDED';
+      break;
+    default:
+      publisherStage = 'NO_ACCESS';
+  }
+
+  return {
+    publisherStage,
+    botHasAccess,
+    meetsMarketplaceFloor: channel.subscriberCount >= settingValue,
+    status: channel.status,
+    subscribers: channel.subscriberCount,
+    minSubscribers: settingValue,
+  };
+}
+
+/**
+ * Publisher clicked "Send to moderation". Allowed only from READY_FOR_REVIEW, and only
+ * if every bot permission is currently recorded as granted (a publisher could otherwise
+ * submit a channel whose perms have just lapsed — the moderator would see "no admin").
+ *
+ * Idempotent: re-clicking the button is a no-op, never an error. Returns the channel
+ * after the move so the UI can re-render.
+ */
+export async function submitChannelForReview(channelId: string, ownerId: string): Promise<Channel> {
+  const channel = await prisma.channel.findUniqueOrThrow({ where: { id: channelId } });
+  if (channel.ownerId !== ownerId) throw new ForbiddenError('Not the channel owner');
+
+  if (channel.status === 'INACTIVE') return channel; // already submitted — idempotent
+  if (channel.status !== 'READY_FOR_REVIEW') {
+    throw new AppError('Grant the bot every required permission in Telegram before submitting for review', 400, 'CHANNEL_NOT_READY');
+  }
+  if (!channel.botIsAdmin || !channel.canPostMessages || !channel.canEditMessages) {
+    throw new AppError('The bot no longer has the permissions it needs', 400, 'BOT_ACCESS_LOST');
+  }
+
+  return prisma.channel.update({
+    where: { id: channelId },
+    data: { status: 'INACTIVE', submittedForReviewAt: new Date() },
+  });
+}
 
 export interface VerifyResult {
   channelId: string;

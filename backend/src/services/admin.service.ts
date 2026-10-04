@@ -849,6 +849,20 @@ export async function adminChannelAction(
     }
 
     case 'APPROVE': {
+      // Only these source states are a real review flow.
+      // REJECTED cannot be re-approved by the same moderator (the publisher has to
+      // make a new submission, which goes through submitForReview again).
+      const approveFrom: ReadonlySet<string> = new Set([
+        'PENDING',
+        'READY_FOR_REVIEW',
+        'INACTIVE',
+        'SUSPENDED',
+      ]);
+      if (!approveFrom.has(channel.status)) {
+        throw new ValidationError(
+          `Cannot approve a channel in state "${channel.status}".`,
+        );
+      }
       // The owner can now submit for review before the bot is an admin (see
       // channel.service.ts:addChannel) — approving it here anyway would
       // publish a channel that cannot actually receive posts yet.

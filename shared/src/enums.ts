@@ -23,6 +23,10 @@ export type AdminRole = (typeof AdminRole)[keyof typeof AdminRole];
 
 export const ChannelStatus = {
   PENDING: 'PENDING',
+  // Publisher granted every bot permission but has not yet submitted the channel
+  // for moderator review. APPROVED is what comes after a moderator signs off;
+  // the wait-state belongs to neither group, hence its own value.
+  READY_FOR_REVIEW: 'READY_FOR_REVIEW',
   APPROVED: 'APPROVED',
   REJECTED: 'REJECTED',
   SUSPENDED: 'SUSPENDED',

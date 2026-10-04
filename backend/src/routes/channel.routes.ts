@@ -14,6 +14,8 @@ import {
   updateChannel,
   deleteChannel,
   verifyChannel,
+  submitChannelForReview,
+  getChannelOnboardingStatus,
   assertChannelOwner,
   type ListChannelsFilter,
 } from '../services/channel.service';
@@ -116,6 +118,36 @@ channelRouter.post('/channels/:id/verify', async (req, res, next) => {
     const user = requireUser(req);
     await assertChannelOwner(user.id, req.params.id);
     res.json({ ok: true, data: await verifyChannel(req.params.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/channels/:id/submit-for-review — publisher taps "Send to moderation" once
+ * every bot permission is recorded as granted. The status moves from
+ * READY_FOR_REVIEW → INACTIVE; a moderator then approves from the admin panel.
+ */
+channelRouter.post('/channels/:id/submit-for-review', async (req, res, next) => {
+  try {
+    const user = requireUser(req);
+    const channel = await submitChannelForReview(req.params.id, user.id);
+    res.json({ ok: true, data: channel });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/channels/:id/onboarding — the page reads this once to render the right
+ * "No access / On hold / On hold (review) / Almost there" card without having to
+ * know anything about the channel state machine.
+ */
+channelRouter.get('/channels/:id/onboarding', async (req, res, next) => {
+  try {
+    const user = requireUser(req);
+    await assertChannelOwner(user.id, req.params.id);
+    res.json({ ok: true, data: await getChannelOnboardingStatus(req.params.id) });
   } catch (err) {
     next(err);
   }

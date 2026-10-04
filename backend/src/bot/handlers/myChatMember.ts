@@ -99,12 +99,19 @@ export async function handleMyChatMember(ctx: Context): Promise<void> {
 
     // Decide the status transition (if any). SUSPENDED channels stay
     // suspended — restoring them is an explicit admin action.
-    let statusChange: { status: 'APPROVED' | 'ATTENTION_REQUIRED' } | null = null;
+    //
+    // The bot granting itself every required permission only moves the channel
+    // to READY_FOR_REVIEW (the publisher then sees "On hold / Send to moderation").
+    // The transition from READY_FOR_REVIEW → APPROVED is reserved for a human
+    // moderator, so the marketplace never sees a channel that no one has looked at.
+    let statusChange: { status: 'READY_FOR_REVIEW' | 'ATTENTION_REQUIRED' } | null = null;
     if (
       canPostMessages &&
-      (channel.status === 'ATTENTION_REQUIRED' || channel.status === 'PENDING')
+      (channel.status === 'ATTENTION_REQUIRED' ||
+        channel.status === 'PENDING' ||
+        channel.status === 'INACTIVE')
     ) {
-      statusChange = { status: 'APPROVED' };
+      statusChange = { status: 'READY_FOR_REVIEW' };
     } else if (
       !canPostMessages &&
       channel.status !== 'SUSPENDED' &&
@@ -123,9 +130,6 @@ export async function handleMyChatMember(ctx: Context): Promise<void> {
         lastPermissionCheck: new Date(),
         ...(statusChange ? { status: statusChange.status } : {}),
         ...(canPostMessages ? { verifiedAt: new Date() } : {}),
-        ...(statusChange?.status === 'APPROVED' && channel.status !== 'APPROVED'
-          ? { approvedAt: new Date() }
-          : {}),
       },
     });
 
@@ -141,15 +145,17 @@ export async function handleMyChatMember(ctx: Context): Promise<void> {
     );
 
     // ---- 3. Notify the owner on transitions -------------------------------
-    if (statusChange?.status === 'APPROVED') {
+    if (statusChange?.status === 'READY_FOR_REVIEW') {
+      // The bot now has every permission — the channel is on hold until the
+      // publisher opens the channel page and taps "Send to moderation".
       await createNotification({
         userId: channel.ownerId,
         type: 'CHANNEL_APPROVED',
-        title: 'Channel approved automatically',
-        body: `BotFlow Bot has administrator access with “Post messages” permission in “${channel.title}”. The channel is now approved automatically and sponsored posts can be delivered.`,
+        title: 'Channel is ready for moderation',
+        body: `BotFlow Bot has the permissions it needs in “${channel.title}”. Open the channel page and tap “Send to moderation” to finish setup.`,
         data: { channelId: channel.id },
       });
-      log.info('posting rights restored → APPROVED');
+      log.info('posting rights granted → READY_FOR_REVIEW');
     } else if (statusChange?.status === 'ATTENTION_REQUIRED') {
       await createNotification({
         userId: channel.ownerId,

@@ -37,6 +37,10 @@ enum AdminRole {
 
 enum ChannelStatus {
   PENDING
+  // The bot is admin and has every right it needs; the publisher has not yet
+  // submitted the channel for moderator review (was a button titled "Send to
+  // moderation" on the publisher's channel page).
+  READY_FOR_REVIEW
   APPROVED
   REJECTED
   SUSPENDED
@@ -805,6 +809,9 @@ model Channel {
   clicks       Click[]
 
   approvedAt DateTime? @map("approved_at")
+  // Stamped the moment the publisher tapped "Send to moderation". Drives the
+  // "On hold" publisher-state and is what moderators sort by.
+  submittedForReviewAt DateTime? @map("submitted_for_review_at")
   verifiedAt DateTime? @map("verified_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")

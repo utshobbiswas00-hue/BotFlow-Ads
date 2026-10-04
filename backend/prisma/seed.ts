@@ -71,6 +71,63 @@ async function seedSettings(): Promise<void> {
   }
 }
 
+/* ---------------------------------------------------------------
+ *  1b. Crypto deposit addresses — bound to CRYPTO_NETWORKS via env. The
+ *      address strings themselves MUST come from the operator's secrets
+ *      (TREASURY_USDT_TRC20, …). Without those vars, this step is a no-op
+ *      and the seed prints a warning so a fresh deployment cannot look
+ *      complete while the deposit page tells every visitor "no address".
+ * ------------------------------------------------------------- */
+async function seedCryptoAddresses(): Promise<void> {
+  // network -> env-var name. Add new networks here when adding support.
+  const ENV_MAP: ReadonlyArray<{ network: string; envKey: string; label: string; memoEnvKey?: string }> = [
+    { network: 'USDT_TRC20', envKey: 'TREASURY_USDT_TRC20', label: 'USDT (TRC20)' },
+    { network: 'USDT_ERC20', envKey: 'TREASURY_USDT_ERC20', label: 'USDT (ERC20)' },
+    { network: 'BTC', envKey: 'TREASURY_BTC', label: 'Bitcoin' },
+    { network: 'ETH', envKey: 'TREASURY_ETH', label: 'Ethereum' },
+    { network: 'LTC', envKey: 'TREASURY_LTC', label: 'Litecoin' },
+    { network: 'SOL', envKey: 'TREASURY_SOL', label: 'Solana' },
+  ];
+
+  const warnings: string[] = [];
+
+  for (const entry of ENV_MAP) {
+    const raw = process.env[entry.envKey];
+    if (!raw || !raw.trim()) {
+      warnings.push(`${entry.envKey} is unset — ${entry.network} will not be available for users`);
+      continue;
+    }
+    const address = raw.trim();
+    const memo = entry.memoEnvKey ? (process.env[entry.memoEnvKey]?.trim() || null) : null;
+    const existing = await prisma.cryptoDepositAddress.findUnique({ where: { network: entry.network } });
+    await prisma.cryptoDepositAddress.upsert({
+      where: { network: entry.network },
+      // Never overwrite an admin-edited address; only fill label/memo if blank.
+      update: {
+        ...(existing && !existing.label ? { label: entry.label } : {}),
+        ...(existing && !existing.memo && memo ? { memo } : {}),
+      },
+      create: {
+        network: entry.network,
+        address,
+        memo,
+        label: entry.label,
+        isActive: true,
+      },
+    });
+    if (existing) {
+      log('skipped', `crypto address ${entry.network} (already configured)`);
+    } else {
+      log('created', `crypto address ${entry.network} (${entry.label})`);
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn('[seed] crypto deposit warnings:');
+    for (const w of warnings) console.warn(`[seed]   ! ${w}`);
+  }
+}
+
 /** 2. Admin users — one SUPER_ADMIN per id in TELEGRAM_ADMIN_IDS. */
 async function seedAdmins(): Promise<void> {
   const ids = env.TELEGRAM_ADMIN_IDS;
@@ -134,6 +191,7 @@ async function main(): Promise<void> {
   console.log('[seed] === BotFlow Ads idempotent seed ===');
 
   await seedSettings();
+  await seedCryptoAddresses();
   await seedAdmins();
 
   // Premium plans. Idempotent: an admin-edited plan is never overwritten.

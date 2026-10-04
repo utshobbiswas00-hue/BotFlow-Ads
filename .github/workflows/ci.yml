@@ -1,0 +1,130 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs when a new push comes in on the same branch. Saves
+# minutes for the agent loops that fire off many small commits.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-backend:
+    name: typecheck · backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc -p backend
+        run: node node_modules/typescript/bin/tsc -p backend/tsconfig.json --noEmit
+
+  typecheck-frontend:
+    name: typecheck · frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc -p frontend
+        run: node node_modules/typescript/bin/tsc -p frontend/tsconfig.json --noEmit
+
+  typecheck-shared:
+    name: typecheck · shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc shared
+        run: |
+          cd shared
+          ../node_modules/typescript/bin/tsc --noEmit
+
+  unit-tests-backend:
+    name: unit tests · backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: vitest unit
+        run: |
+          cd backend
+          node ../node_modules/vitest/vitest.mjs run --config vitest.unit.config.ts
+
+  unit-tests-frontend:
+    name: unit tests · frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: vitest frontend
+        run: |
+          cd frontend
+          node ../node_modules/vitest/vitest.mjs run
+
+  build-shared:
+    name: build · shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: |
+          cd shared
+          ../node_modules/typescript/bin/tsc
+          # If the dist tree built, the build is good.
+          test -f dist/index.d.ts
+
+  prisma-format:
+    name: prisma format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: validate prisma schema
+        run: |
+          node node_modules/prisma/build/index.js format \
+            --schema=backend/prisma/schema.prisma
+
+  all-green:
+    name: gate
+    runs-on: ubuntu-latest
+    needs:
+      - typecheck-backend
+      - typecheck-frontend
+      - typecheck-shared
+      - unit-tests-backend
+      - unit-tests-frontend
+      - build-shared
+      - prisma-format
+    steps:
+      - run: echo "all green ✅"

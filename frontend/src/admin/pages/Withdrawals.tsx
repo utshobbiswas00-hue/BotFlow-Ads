@@ -160,6 +160,29 @@ export function AdminWithdrawalsPage() {
               successMessage: 'Withdrawal approved',
             };
           }
+          if (a === 'MARK_PROCESSING') {
+            return {
+              key: a,
+              label: 'Mark processing',
+              confirmTitle: 'Mark the payout as in-flight?',
+              confirmDescription:
+                'The withdrawal is moved to PROCESSING. The user gets a notification that their money is on the way, and the off-platform reference becomes the proof of intent. You will still need to "Mark as paid" once the transfer clears.',
+              confirmLabel: 'Mark as processing',
+              fields: [
+                {
+                  name: 'payoutRef',
+                  label: 'Payout reference',
+                  required: true,
+                  maxLength: 128,
+                  mono: true,
+                  hint: 'Anything that identifies the in-flight payout: txid, batch id, bank slip number.',
+                },
+              ],
+              run: (values) =>
+                withdrawalAction(w.id, 'MARK_PROCESSING', { payoutRef: values.payoutRef }),
+              successMessage: 'Withdrawal marked as processing',
+            };
+          }
           if (a === 'REJECT') {
             return {
               key: a,

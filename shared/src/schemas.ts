@@ -213,8 +213,11 @@ export const adminChannelActionSchema = z.object({
 
 export const adminWithdrawalActionSchema = z.object({
   withdrawalId: z.string().min(1),
-  action: z.enum(['APPROVE', 'REJECT', 'MARK_PAID']),
+  action: z.enum(['APPROVE', 'REJECT', 'MARK_PROCESSING', 'MARK_PAID']),
   txRef: z.string().max(128).optional().nullable(),
+  // Required for MARK_PROCESSING — the operator's off-platform reference
+  // (crypto tx hash, wire batch id, etc.) that proves the payout has started.
+  payoutRef: z.string().max(128).optional().nullable(),
   note: z.string().max(500).optional().nullable(),
 });
 

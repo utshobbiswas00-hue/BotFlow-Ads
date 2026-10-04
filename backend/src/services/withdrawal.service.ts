@@ -433,6 +433,65 @@ export async function rejectWithdrawal(adminId: string, id: string, reason: stri
  * Mark an approved withdrawal as paid out. The payout itself (the on-chain
  * transfer) happens outside the platform; this records proof (`txRef`).
  */
+/**
+ * Move an APPROVED withdrawal to PROCESSING — the moment the platform has
+ * actually initiated the off-platform payout (e.g. broadcast the crypto tx,
+ * queued the bank wire). Until then a withdrawal can sit APPROVED indefinitely
+ * without anyone holding the operator's feet to the fire; stamping PROCESSING
+ * gives the operator (and the user) a clear "this is on its way" signal.
+ *
+ * Race-safe: uses updateMany so two admins cannot double-stamp, and the status
+ * guard means an already-PAID or REJECTED row cannot be silently flipped back
+ * to PROCESSING.
+ */
+export async function markWithdrawalProcessing(
+  adminId: string,
+  id: string,
+  payoutRef: string,
+): Promise<Withdrawal> {
+  const withdrawal = await prisma.withdrawal.findUnique({ where: { id } });
+  if (!withdrawal) throw new NotFoundError('Withdrawal');
+  if (withdrawal.status !== 'APPROVED') {
+    throw new ConflictError(
+      `Cannot mark a withdrawal in status ${withdrawal.status} as processing — approve it first.`,
+    );
+  }
+
+  const claimed = await prisma.withdrawal.updateMany({
+    where: { id, status: 'APPROVED' },
+    data: {
+      status: 'PROCESSING',
+      processedById: adminId,
+      processedAt: new Date(),
+      payoutRef,
+    },
+  });
+  if (claimed.count === 0) {
+    throw new ConflictError('This withdrawal is no longer APPROVED');
+  }
+
+  const updated = await prisma.withdrawal.findUniqueOrThrow({ where: { id } });
+
+  await recordAudit({
+    actorId: adminId,
+    action: 'WITHDRAWAL_PROCESSING',
+    targetType: 'WITHDRAWAL',
+    targetId: id,
+    oldValue: { status: 'APPROVED' },
+    newValue: { status: 'PROCESSING', payoutRef },
+  });
+
+  await createNotification({
+    userId: withdrawal.userId,
+    type: 'WITHDRAWAL_PROCESSING',
+    title: 'Withdrawal is on its way',
+    body: `Your withdrawal of ${formatMoney(withdrawal.netAmountCents, withdrawal.currency)} is being processed. You'll see it land as soon as the transfer clears.`,
+    data: { withdrawalId: id, payoutRef },
+  });
+
+  return updated;
+}
+
 export async function markWithdrawalPaid(adminId: string, id: string, txRef: string): Promise<Withdrawal> {
   const withdrawal = await prisma.withdrawal.findUnique({ where: { id } });
   if (!withdrawal) throw new NotFoundError('Withdrawal');

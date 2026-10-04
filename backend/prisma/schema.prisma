@@ -218,6 +218,7 @@ enum NotificationType {
   AD_PUBLISHED
   EARNINGS_ADDED
   WITHDRAWAL_APPROVED
+  WITHDRAWAL_PROCESSING
   WITHDRAWAL_PAID
   WITHDRAWAL_REJECTED
   DEPOSIT_VERIFIED
@@ -375,8 +376,12 @@ model User {
   @@index([status])
   @@index([createdAt])
   @@index([referredById])
+  notificationPrefs Json?        @map("notification_prefs")
+  lastExportRequestAt DateTime? @map("last_export_request_at")
   @@map("users")
 }
+
+
 
 model AdminUser {
   id          String    @id @default(cuid())
@@ -653,6 +658,10 @@ model Withdrawal {
   processedById String?   @map("processed_by_id")
   processedAt   DateTime? @map("processed_at")
   txRef         String?   @map("tx_ref")
+  // Set the moment the operator marks the withdrawal as PROCESSING — an
+  // off-platform reference (crypto tx hash, wire batch id, …) that lets the
+  // user see "yes, your money is actually moving".
+  payoutRef     String?   @map("payout_ref")
   rejectReason  String?   @map("reject_reason")
   note          String?
 

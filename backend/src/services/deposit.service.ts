@@ -355,14 +355,13 @@ export async function verifyDeposit(
 }
 
 export async function rejectDeposit(adminId: string, depositId: string, note: string): Promise<Deposit> {
-  const deposit = await prisma.deposit.findUnique({ where: { id: depositId } });
-  if (!deposit) throw new NotFoundError('Deposit');
-  if (deposit.status !== 'PENDING') {
-    throw new ConflictError(`Cannot reject a deposit in status ${deposit.status}`);
-  }
-
-  const updated = await prisma.deposit.update({
-    where: { id: depositId },
+  // Symmetric to verifyDeposit: we lock the row, claim the PENDING status via
+  // updateMany, and either exactly one admin wins the race or the loser sees a
+  // conflict. The earlier findUnique + update pair was readable but raced —
+  // two admins could each pass the status check, both write REJECTED, and the
+  // second silently overwrote the first's note and identity.
+  const claimed = await prisma.deposit.updateMany({
+    where: { id: depositId, status: 'PENDING' },
     data: {
       status: 'REJECTED',
       verifiedById: adminId,
@@ -370,6 +369,13 @@ export async function rejectDeposit(adminId: string, depositId: string, note: st
       note,
     },
   });
+  if (claimed.count === 0) {
+    throw new ConflictError(
+      'This deposit has already been processed by someone else or is no longer pending.',
+    );
+  }
+
+  const updated = await prisma.deposit.findUniqueOrThrow({ where: { id: depositId } });
 
   await recordAudit({
     actorId: adminId,

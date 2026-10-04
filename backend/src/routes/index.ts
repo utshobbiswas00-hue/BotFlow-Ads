@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth';
 import { meRouter } from './me.routes';
+import { authRouter } from './auth.routes';
 import { channelRouter } from './channel.routes';
 import { marketplaceRouter } from './marketplace.routes';
 import { campaignRouter } from './campaign.routes';
@@ -39,6 +40,7 @@ export const router = Router();
 router.use(telegramAuth());
 
 router.use(meRouter);
+router.use(authRouter);
 router.use(channelRouter);
 router.use(marketplaceRouter);
 router.use(campaignRouter);

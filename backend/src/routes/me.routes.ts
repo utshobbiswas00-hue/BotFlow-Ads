@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate';
 import { UnauthorizedError } from '../utils/errors';
 import type { AuthUser } from '../types/auth';
+import { prisma } from '../db/prisma';
+import { logger } from '../config/logger';
 import { getUserProfile, getDashboard, updateUserProfile } from '../services/user.service';
 import { getWallet, withdrawableCents, netWorthCents } from '../services/wallet.service';
 import { countUnread } from '../services/notification.service';
@@ -102,3 +104,82 @@ meRouter.get('/me/summary', async (req, res, next) => {
     next(err);
   }
 });
+
+/* ------------------------------------------------------------------
+ *  Notification preferences — the toggles on /settings.
+ *
+ *  Stored as JSON on the User row so we don't need a separate table
+ *  for three booleans. A migration adds the column (existing rows
+ *  get null, which the route treats as "all channels on").
+ * ------------------------------------------------------------------ */
+const NOTIFICATION_PREFS_BODY = z.object({
+  telegram: z.boolean(),
+  email: z.boolean(),
+  push: z.boolean(),
+});
+
+meRouter.get('/me/notification-prefs', async (req, res, next) => {
+  try {
+    const user = requireUser(req);
+    const u = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { notificationPrefs: true },
+    });
+    const prefs = (u.notificationPrefs as { telegram?: boolean; email?: boolean; push?: boolean } | null) ?? null;
+    res.json({
+      ok: true,
+      data: {
+        telegram: prefs?.telegram ?? true,
+        email: prefs?.email ?? true,
+        push: prefs?.push ?? false,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.post(
+  '/me/notification-prefs',
+  validate({ body: NOTIFICATION_PREFS_BODY }),
+  async (req, res, next) => {
+    try {
+      const user = requireUser(req);
+      const body = req.body as z.infer<typeof NOTIFICATION_PREFS_BODY>;
+      const u = await prisma.user.update({
+        where: { id: user.id },
+        data: { notificationPrefs: body },
+        select: { notificationPrefs: true },
+      });
+      const prefs = u.notificationPrefs as { telegram: boolean; email: boolean; push: boolean };
+      res.json({ ok: true, data: prefs });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/* ------------------------------------------------------------------
+ *  Data export — request a full download of the user's data.
+ *
+ *  We don't block on building the archive here; we enqueue a job and
+ *  email a signed link when it's ready. For now (no archive job wired
+ *  in this commit) we acknowledge synchronously and respond with the
+ *  expected delivery shape.
+ * ------------------------------------------------------------------ */
+meRouter.post('/me/export', async (req, res, next) => {
+  try {
+    const user = requireUser(req);
+    // No-op stub: production wires this to an archive job; the front-end
+    // only needs to know "your export was queued, you'll get an email".
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastExportRequestAt: new Date() },
+    });
+    logger.info({ userId: user.id }, 'user data export requested');
+    res.json({ ok: true, data: { status: 'queued' } });
+  } catch (err) {
+    next(err);
+  }
+});
+

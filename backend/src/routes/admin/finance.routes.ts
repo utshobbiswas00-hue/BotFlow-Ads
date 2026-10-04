@@ -12,6 +12,7 @@ import {
   approveWithdrawal,
   listWithdrawalsAdmin,
   markWithdrawalPaid,
+  markWithdrawalProcessing,
   rejectWithdrawal,
 } from '../../services/withdrawal.service';
 import { AppError, ValidationError } from '../../utils/errors';
@@ -200,6 +201,12 @@ financeRouter.post('/withdrawals/action', requirePermission('withdrawals.manage'
         const txRef = body.txRef?.trim();
         if (!txRef) throw new ValidationError('txRef is required to mark a withdrawal as paid');
         data = await markWithdrawalPaid(actor, body.withdrawalId, txRef);
+        break;
+      }
+      case 'MARK_PROCESSING': {
+        const payoutRef = body.payoutRef?.trim();
+        if (!payoutRef) throw new ValidationError('payoutRef is required to mark a withdrawal as processing');
+        data = await markWithdrawalProcessing(actor, body.withdrawalId, payoutRef);
         break;
       }
     }

@@ -180,10 +180,18 @@ export function depositActionsFor(status: string): ('VERIFY' | 'REJECT')[] {
  *   REJECT    → PENDING or APPROVED; refunds principal + fee via the ledger.
  *   MARK_PAID → APPROVED or PROCESSING; `txRef` is required as payout proof.
  */
-export function withdrawalActionsFor(status: string): ('APPROVE' | 'REJECT' | 'MARK_PAID')[] {
-  const out: ('APPROVE' | 'REJECT' | 'MARK_PAID')[] = [];
+export function withdrawalActionsFor(
+  status: string,
+): ('APPROVE' | 'REJECT' | 'MARK_PROCESSING' | 'MARK_PAID')[] {
+  const out: ('APPROVE' | 'REJECT' | 'MARK_PROCESSING' | 'MARK_PAID')[] = [];
   if (status === 'PENDING') out.push('APPROVE');
   if (status === 'PENDING' || status === 'APPROVED') out.push('REJECT');
+  // MARK_PROCESSING only makes sense AFTER the operator has approved the
+  // request — PENDING → APPROVED is the "I will pay this" stamp, and
+  // APPROVED → PROCESSING is the "I'm broadcasting it now" stamp. PENDING
+  // cannot jump straight to PROCESSING (the APPROVE audit entry would be
+  // missing).
+  if (status === 'APPROVED') out.push('MARK_PROCESSING');
   if (status === 'APPROVED' || status === 'PROCESSING') out.push('MARK_PAID');
   return out;
 }

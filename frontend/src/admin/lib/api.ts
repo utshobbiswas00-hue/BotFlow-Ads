@@ -350,14 +350,15 @@ export const listWithdrawals = (q: WithdrawalsQuery = {}): Promise<Paginated<Adm
 
 export const withdrawalAction = (
   withdrawalId: string,
-  action: 'APPROVE' | 'REJECT' | 'MARK_PAID',
-  opts: { note?: string; txRef?: string } = {},
+  action: 'APPROVE' | 'REJECT' | 'MARK_PROCESSING' | 'MARK_PAID',
+  opts: { note?: string; txRef?: string; payoutRef?: string } = {},
 ): Promise<unknown> =>
   api.post(`${BASE}/finance/withdrawals/action`, {
     withdrawalId,
     action,
     note: opts.note?.trim() ? opts.note.trim() : null,
     txRef: opts.txRef?.trim() ? opts.txRef.trim() : null,
+    payoutRef: opts.payoutRef?.trim() ? opts.payoutRef.trim() : null,
   });
 
 export interface TransactionsQuery extends ListQueryParams {

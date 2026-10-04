@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PAGINATION, type ChannelSummary, type Paginated } from '@botflow/shared';
 import { api } from '../lib/api';
 import type { BlocklistResponse, ChannelDetail } from '../lib/contracts';
@@ -45,6 +45,44 @@ export function useChannelBlocklist(id: string | undefined, enabled: boolean = t
     queryKey: qk.channelBlocklist(id ?? ''),
     enabled: enabled && !!id,
     queryFn: (): Promise<BlocklistResponse> => api.get<BlocklistResponse>(`/api/channels/${id}/blocklist`),
+  });
+}
+
+/**
+ * What the bot's rights currently are inside one channel.
+ * `POST /api/channels/:id/verify` — owner only.
+ */
+export interface ChannelVerifyResult {
+  channelId: string;
+  status: string;
+  botIsAdmin: boolean;
+  canPostMessages: boolean;
+  canEditMessages: boolean;
+  canDeleteMessages: boolean;
+  permissionLost: boolean;
+}
+
+/**
+ * Ask the backend to re-read the bot's rights from Telegram for one channel.
+ *
+ * The panel renders the STORED snapshot, and only two things rewrite it: Telegram's
+ * `my_chat_member` push — which needs a correctly registered webhook — and a call to this
+ * endpoint. `permission.worker` sweeps APPROVED channels, so a channel whose owner has just
+ * granted access has nothing else to refresh it. That is why the "Open access" banner could
+ * stay on screen after the bot had been made an administrator: the panel kept re-reading a
+ * snapshot nobody had updated. This is the call that settles it — it reads Telegram
+ * directly, and promotes the channel (PENDING/ATTENTION_REQUIRED → APPROVED) once the
+ * rights are really there.
+ */
+export function useVerifyChannel(id: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (): Promise<ChannelVerifyResult> =>
+      api.post<ChannelVerifyResult>(`/api/channels/${id}/verify`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.channels });
+      void qc.invalidateQueries({ queryKey: qk.channel(id ?? '') });
+    },
   });
 }
 

@@ -191,3 +191,68 @@ describe('ChannelDetailPage — ad settings', () => {
     );
   });
 });
+
+/**
+ * The bot-access banner.
+ *
+ * The banner is driven by the STORED permission snapshot, and the page used to keep
+ * re-reading that snapshot — which nothing updates unless Telegram's `my_chat_member` push
+ * arrives (it needs a registered webhook) or something calls the verify endpoint
+ * (`permission.worker` only sweeps APPROVED channels). So a publisher who granted the bot
+ * access was left staring at "Missing permissions" and an "Open access" button that already
+ * described work they had done. These tests pin the fix: the page asks Telegram, rather than
+ * re-reading a snapshot that nobody rewrote.
+ */
+describe('ChannelDetailPage — bot access banner', () => {
+  const noAccess = { botIsAdmin: false, canPostMessages: false };
+
+  it('asks Telegram for the current rights as soon as the banner is up', async () => {
+    renderPage(makeChannel(noAccess));
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+
+    await waitFor(() =>
+      expect(mockApi.post).toHaveBeenCalledWith(`/api/channels/${CHANNEL_ID}/verify`),
+    );
+  });
+
+  it('re-checks on demand', async () => {
+    const user = userEvent.setup();
+    renderPage(makeChannel(noAccess));
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+    await waitFor(() => expect(mockApi.post).toHaveBeenCalled());
+    mockApi.post.mockClear();
+
+    await user.click(screen.getByRole('button', { name: /re-check access/i }));
+
+    expect(mockApi.post).toHaveBeenCalledWith(`/api/channels/${CHANNEL_ID}/verify`);
+  });
+
+  it('says the rights are still missing when Telegram still reports none', async () => {
+    mockApi.post.mockResolvedValue({
+      channelId: CHANNEL_ID,
+      status: 'PENDING',
+      botIsAdmin: false,
+      canPostMessages: false,
+      canEditMessages: false,
+      canDeleteMessages: false,
+      permissionLost: true,
+    });
+    const user = userEvent.setup();
+    renderPage(makeChannel(noAccess));
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+
+    await user.click(screen.getByRole('button', { name: /re-check access/i }));
+
+    expect(await screen.findByText(/Telegram still reports no posting rights/i)).toBeInTheDocument();
+  });
+
+  it('keeps the banner and the button out of the way when access is already granted', async () => {
+    renderPage(makeChannel({ botIsAdmin: true, canPostMessages: true }));
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+
+    // Nothing to fix, so nothing is asked of Telegram either.
+    expect(screen.queryByRole('button', { name: /open access/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Missing permissions/i)).not.toBeInTheDocument();
+    expect(mockApi.post).not.toHaveBeenCalled();
+  });
+});

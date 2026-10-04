@@ -23,6 +23,7 @@ import { logoutAdmin } from '../lib/api';
 import { Icon } from '../../components/ui/icons';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { ToastContainer } from '../../components/ui/Toast';
+import { FloatingChatWidget } from '../../components/ai/FloatingChatWidget';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { ADMIN_NAV, ROLE_LABELS, activeNavGroup, activeNavItem } from '../lib/permissions';
 import { AdminSessionProvider, useAdminSession } from '../lib/session';
@@ -282,6 +283,9 @@ function AdminLayout() {
               {noPermissions ? <NoPermissions /> : <Outlet />}
             </div>
           </main>
+
+        {/* Same widget as the publisher shell — admins also need it. */}
+        <FloatingChatWidget />
         </div>
       </div>
     </div>

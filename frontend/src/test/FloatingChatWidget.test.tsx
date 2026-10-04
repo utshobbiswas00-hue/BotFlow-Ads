@@ -147,3 +147,33 @@ describe('AppShell mounts the assistant', () => {
     expect(screen.getByRole('button', { name: /open botflow assistant/i })).toBeInTheDocument();
   });
 });
+
+describe('FloatingChatWidget — visibility', () => {
+  it('bubble has position:fixed inline so it floats above page content', () => {
+    render(
+      <MemoryRouter>
+        <FloatingChatWidget />
+      </MemoryRouter>,
+    );
+    const bubble = screen.getByRole('button', { name: /Open BotFlow Assistant/i });
+    // Inline style attributes win over CSS class purging, which is exactly
+    // why this widget sets them. If anyone reverts to className-only, the
+    // assertion below will fail in jsdom (no Tailwind compile).
+    expect(bubble.style.position).toBe('fixed');
+    // z-index must be high enough to clear the bottom nav (which is z-40).
+    const zi = Number(bubble.style.zIndex);
+    expect(Number.isFinite(zi) && zi >= 50).toBe(true);
+  });
+
+  it('drawer also uses position:fixed when opened', async () => {
+    render(
+      <MemoryRouter>
+        <FloatingChatWidget />
+      </MemoryRouter>,
+    );
+    const bubble = screen.getByRole('button', { name: /Open BotFlow Assistant/i });
+    await fireEvent.click(bubble);
+    const drawer = await screen.findByRole('dialog', { name: /BotFlow Assistant/i });
+    expect(drawer.style.position).toBe('fixed');
+  });
+});

@@ -81,8 +81,24 @@ export function FloatingChatWidget() {
         <button
           type="button"
           aria-label="Open BotFlow Assistant"
-          className="bf-chat-bubble"
           onClick={() => setOpen(true)}
+          style={{
+            position: 'fixed',
+            right: '1rem',
+            bottom: '5.25rem',
+            zIndex: 60,
+            width: '52px',
+            height: '52px',
+            borderRadius: '9999px',
+            background: '#0386FA',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 10px 25px rgba(3, 134, 250, 0.45)',
+            border: 'none',
+            cursor: 'pointer',
+          }}
         >
           {/* chat bubble glyph */}
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -98,7 +114,26 @@ export function FloatingChatWidget() {
       )}
 
       {open && (
-        <section role="dialog" aria-label="BotFlow Assistant" className="bf-chat-drawer">
+        <section
+          role="dialog"
+          aria-label="BotFlow Assistant"
+          style={{
+            position: 'fixed',
+            zIndex: 60,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '70vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            background: 'var(--tg-theme-secondary-bg-color, #ffffff)',
+            color: 'var(--tg-theme-text-color, #111827)',
+            borderTopLeftRadius: '1rem',
+            borderTopRightRadius: '1rem',
+            boxShadow: '0 -8px 30px rgba(0, 0, 0, 0.18)',
+          }}
+        >
           <header className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
             <div className="min-w-0">
               <h2 className="text-sm font-semibold leading-tight">BotFlow Assistant</h2>

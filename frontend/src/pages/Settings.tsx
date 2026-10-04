@@ -62,8 +62,23 @@ export function SettingsPage() {
           <div className="flex-1 min-w-0">
             <p className="font-bold truncate">{user ? displayName(user) : '…'}</p>
             <p className="text-sm text-link truncate">{user?.username ? `@${user.username.replace(/^@/, '')}` : 'No username'}</p>
-            <p className="text-xs text-mute mt-0.5">
-              Telegram ID {user?.telegramId} · joined {formatDate(user?.createdAt ?? null)}
+            <p className="text-xs text-mute mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>
+                Telegram ID{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (user?.telegramId) void navigator.clipboard.writeText(String(user.telegramId));
+                  }}
+                  className="font-mono text-text underline-offset-2 hover:underline active:scale-95"
+                  aria-label="Copy Telegram ID"
+                  title="Tap to copy"
+                >
+                  {user?.telegramId ?? '…'}
+                </button>
+              </span>
+              <span aria-hidden>·</span>
+              <span>joined {formatDate(user?.createdAt ?? null)}</span>
             </p>
           </div>
           {user && <StatusBadge status={user.status} />}

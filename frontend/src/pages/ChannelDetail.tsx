@@ -62,7 +62,14 @@ export function ChannelDetailPage() {
 
   // Whether the banner above is showing — i.e. whether the stored snapshot still says the
   // bot cannot post here.
-  const needsAccess = !!q.data && (!q.data.botIsAdmin || !q.data.canPostMessages);
+  // Whether the banner above is showing. A missing flag (older backend, unset snapshot)
+  // is treated as "no" by negation — i.e. the banner STAYS up when we do not know the
+  // answer. That is the safe default: the publisher can only clear it once the bot is
+  // recorded with every right, and we never claim a channel is good when we have not been
+  // told so.
+  const needsAccess =
+    !!q.data &&
+    (!q.data.botIsAdmin || !q.data.canPostMessages || !q.data.canEditMessages || !q.data.canInviteUsers);
 
   // The banner disappears only when the snapshot changes, and only `my_chat_member` (which
   // needs a registered webhook) or a verify call changes it. Refetching alone re-read the
@@ -224,7 +231,7 @@ export function ChannelDetailPage() {
 
         {/* Bot-access banner. Telegram runs the permission UI; the panel shows the state
             it last stored, and the verify effect above keeps asking until it agrees. */}
-        {(!c.botIsAdmin || !c.canPostMessages) && (
+        {(!c.botIsAdmin || !c.canPostMessages || !c.canEditMessages || !c.canInviteUsers) && (
           <Card className="border-warn/40 bg-warn/10 space-y-3">
             <div className="flex items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warn/20 text-warn">
@@ -238,16 +245,21 @@ export function ChannelDetailPage() {
             <ul className="space-y-1.5 text-sm">
               <li className="flex items-center gap-2">
                 <Icon name={c.botIsAdmin ? 'check' : 'shield'} size={14} className={c.botIsAdmin ? 'text-ok' : 'text-mute'} />
-                BotFlow Bot is an administrator
+                Permission to edit messages
+              </li>
+              <li className="flex items-center gap-2">
+                <Icon name={c.canInviteUsers ? 'check' : 'shield'} size={14} className={c.canInviteUsers ? 'text-ok' : 'text-mute'} />
+                Permission to invite users
               </li>
               <li className="flex items-center gap-2">
                 <Icon name={c.canPostMessages ? 'check' : 'shield'} size={14} className={c.canPostMessages ? 'text-ok' : 'text-mute'} />
-                "Post messages" permission enabled
+                Permission to post messages
               </li>
             </ul>
             <p className="text-xs text-mute leading-relaxed">
-              Open your channel → Administrators → add <b>BotFlow Bot</b> → turn on <b>Post messages</b>.
-              Come back here and this banner clears on its own once Telegram reports the permission.
+              Open your channel → Administrators → add <b>BotFlow Bot</b> → turn on
+              <b> Post messages</b>, <b>Edit messages</b> and <b>Invite users via link</b>.
+              Come back here and this banner clears on its own once Telegram reports the permissions.
             </p>
             <Button
               full

@@ -108,6 +108,7 @@ export interface BotPermissionSnapshot {
   canPostMessages: boolean;
   canEditMessages: boolean;
   canDeleteMessages: boolean;
+  canInviteUsers: boolean;
   /** Populated when the check could not complete. */
   errorCode?: DeliveryErrorCode;
   errorMessage?: string;
@@ -123,6 +124,7 @@ export async function checkBotPermissions(chatId: string | number | bigint): Pro
       canPostMessages: false,
       canEditMessages: false,
       canDeleteMessages: false,
+      canInviteUsers: false,
       errorCode: DeliveryErrorCode.TELEGRAM_API_ERROR,
       errorMessage: 'Could not resolve bot identity (getMe failed)',
     };
@@ -144,6 +146,8 @@ export async function checkBotPermissions(chatId: string | number | bigint): Pro
       canPostMessages: isAdmin && (m.status === 'creator' || m.can_post_messages === true),
       canEditMessages: isAdmin && (m.status === 'creator' || m.can_edit_messages === true),
       canDeleteMessages: isAdmin && (m.status === 'creator' || m.can_delete_messages === true),
+      // Telegram returns boolean | null for invite; treat null the same as false.
+      canInviteUsers: isAdmin && (m.status === 'creator' || (m as { can_invite_users?: boolean | null }).can_invite_users === true),
       ...(isAdmin ? {} : { errorCode: DeliveryErrorCode.BOT_NOT_ADMIN, errorMessage: 'Bot is not an administrator of this channel' }),
     };
   } catch (err) {
@@ -153,6 +157,7 @@ export async function checkBotPermissions(chatId: string | number | bigint): Pro
       canPostMessages: false,
       canEditMessages: false,
       canDeleteMessages: false,
+      canInviteUsers: false,
       errorCode: code,
       errorMessage: messageOf(err),
     };

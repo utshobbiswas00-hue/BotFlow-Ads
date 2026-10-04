@@ -59,6 +59,7 @@ export interface ChannelVerifyResult {
   canPostMessages: boolean;
   canEditMessages: boolean;
   canDeleteMessages: boolean;
+  canInviteUsers: boolean;
   permissionLost: boolean;
 }
 

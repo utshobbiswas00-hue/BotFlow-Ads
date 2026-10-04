@@ -204,7 +204,21 @@ describe('ChannelDetailPage — ad settings', () => {
  * re-reading a snapshot that nobody rewrote.
  */
 describe('ChannelDetailPage — bot access banner', () => {
-  const noAccess = { botIsAdmin: false, canPostMessages: false };
+  // All four flags we ask the publisher to enable in Telegram. The banner stays up while
+  // any one is missing — mirrors the three-permission checklist it shows.
+  const noAccess = {
+    botIsAdmin: false,
+    canPostMessages: false,
+    canEditMessages: false,
+    canInviteUsers: false,
+  };
+  const granted = {
+    botIsAdmin: true,
+    canPostMessages: true,
+    canEditMessages: true,
+    canDeleteMessages: true,
+    canInviteUsers: true,
+  };
 
   it('asks Telegram for the current rights as soon as the banner is up', async () => {
     renderPage(makeChannel(noAccess));
@@ -235,6 +249,7 @@ describe('ChannelDetailPage — bot access banner', () => {
       canPostMessages: false,
       canEditMessages: false,
       canDeleteMessages: false,
+      canInviteUsers: false,
       permissionLost: true,
     });
     const user = userEvent.setup();
@@ -247,12 +262,42 @@ describe('ChannelDetailPage — bot access banner', () => {
   });
 
   it('keeps the banner and the button out of the way when access is already granted', async () => {
-    renderPage(makeChannel({ botIsAdmin: true, canPostMessages: true }));
+    renderPage(makeChannel(granted));
     await screen.findByRole('heading', { name: 'Demo Channel' });
 
     // Nothing to fix, so nothing is asked of Telegram either.
     expect(screen.queryByRole('button', { name: /open access/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/Missing permissions/i)).not.toBeInTheDocument();
     expect(mockApi.post).not.toHaveBeenCalled();
+  });
+
+  it('lists the three permissions the publisher has to grant in Telegram', async () => {
+    renderPage(makeChannel(noAccess));
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+
+    expect(screen.getByText(/Permission to edit messages/i)).toBeInTheDocument();
+    expect(screen.getByText(/Permission to invite users/i)).toBeInTheDocument();
+    expect(screen.getByText(/Permission to post messages/i)).toBeInTheDocument();
+  });
+
+  it('still shows the banner when only the new flag (canInviteUsers) is missing', async () => {
+    // Regression pin for the old shape where only botIsAdmin/canPostMessages were checked —
+    // a channel with botIsAdmin && canPostMessages but no invite right would have had the
+    // banner falsely cleared, and the publisher would have had no way to grant it from here.
+    renderPage(
+      makeChannel({
+        botIsAdmin: true,
+        canPostMessages: true,
+        canEditMessages: true,
+        canDeleteMessages: true,
+        canInviteUsers: false,
+      }),
+    );
+    await screen.findByRole('heading', { name: 'Demo Channel' });
+
+    // The card itself is the witness, not the "Missing permissions" subtitle that may be split.
+    // DEBUG
+    screen.debug(undefined, 90000);
+    expect(await screen.findByRole('button', { name: /open access/i })).toBeInTheDocument();
   });
 });

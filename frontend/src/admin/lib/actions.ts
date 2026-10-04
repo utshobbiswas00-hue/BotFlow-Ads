@@ -129,10 +129,12 @@ export function channelActionsFor(status: string): ChannelAction[] {
 
 /** `adminChannelAction` refuses APPROVE unless the bot can actually post. */
 export function channelNeedsRightsRecheck(channel: {
-  botIsAdmin: boolean;
-  canPostMessages: boolean;
+  botIsAdmin?: boolean;
+  canPostMessages?: boolean;
 }): boolean {
-  return !(channel.botIsAdmin && channel.canPostMessages);
+  // Treat missing flags as "no" — the same default the panel uses, so the rule stays
+  // consistent if a backend ever omits them.
+  return !(channel.botIsAdmin === true && channel.canPostMessages === true);
 }
 
 /**
@@ -144,16 +146,16 @@ export function channelNeedsRightsRecheck(channel: {
  * the page so the rule can be asserted.
  */
 export function channelApproveAnywayOffered(channel: {
-  botIsAdmin: boolean;
-  canPostMessages: boolean;
+  botIsAdmin?: boolean;
+  canPostMessages?: boolean;
   status: string;
 }): boolean {
   return channelNeedsRightsRecheck(channel) && channel.status === 'PENDING';
 }
 
 export function channelApproveBlockedReason(channel: {
-  botIsAdmin: boolean;
-  canPostMessages: boolean;
+  botIsAdmin?: boolean;
+  canPostMessages?: boolean;
   title: string;
 }): string | null {
   if (!channelNeedsRightsRecheck(channel)) return null;

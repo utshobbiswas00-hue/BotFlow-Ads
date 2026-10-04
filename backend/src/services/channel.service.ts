@@ -176,6 +176,7 @@ export async function addChannel(ownerId: string, input: AddChannelInput) {
       canPostMessages: perms.canPostMessages,
       canEditMessages: perms.canEditMessages,
       canDeleteMessages: perms.canDeleteMessages,
+      canInviteUsers: perms.canInviteUsers,
       lastPermissionCheck: new Date(),
       adPriceCents: defaultPrice,
       pricingModel: 'FIXED',
@@ -447,6 +448,9 @@ export interface VerifyResult {
   status: ChannelStatus;
   botIsAdmin: boolean;
   canPostMessages: boolean;
+  canEditMessages: boolean;
+  canDeleteMessages: boolean;
+  canInviteUsers: boolean;
   permissionLost: boolean;
 }
 
@@ -463,7 +467,14 @@ export async function verifyChannel(channelId: string): Promise<VerifyResult> {
   if (!channel) throw new NotFoundError('Channel');
 
   const perms = await checkBotPermissions(channel.telegramChannelId);
-  const permissionLost = !perms.botIsAdmin || !perms.canPostMessages;
+  // Permission lost when any of the four flags is missing — mirrors the three-permission
+  // checklist the publisher panel renders, so the banner stays in sync with what we ask
+  // the owner to enable in Telegram.
+  const permissionLost =
+    !perms.botIsAdmin ||
+    !perms.canPostMessages ||
+    !perms.canEditMessages ||
+    !perms.canInviteUsers;
 
   let nextStatus: ChannelStatus = channel.status;
 
@@ -499,6 +510,9 @@ export async function verifyChannel(channelId: string): Promise<VerifyResult> {
     status: nextStatus,
     botIsAdmin: perms.botIsAdmin,
     canPostMessages: perms.canPostMessages,
+    canEditMessages: perms.canEditMessages,
+    canDeleteMessages: perms.canDeleteMessages,
+    canInviteUsers: perms.canInviteUsers,
     permissionLost,
   };
 }

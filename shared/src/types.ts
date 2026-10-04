@@ -68,8 +68,13 @@ export interface ChannelSummary {
   subscriberCount: number;
   avgViews: number;
   status: string;
-  canPostMessages: boolean;
-  botIsAdmin: boolean;
+  /* The bot's rights in the channel. Older backends may not write them; the
+     panel treats a missing flag as `false` so the banner stays meaningful. */
+  canPostMessages?: boolean;
+  botIsAdmin?: boolean;
+  canEditMessages?: boolean;
+  canDeleteMessages?: boolean;
+  canInviteUsers?: boolean;
   pricingModel: string;
   adPriceCents: number;
   totalAdsPublished: number;

@@ -745,6 +745,7 @@ model Channel {
   canPostMessages     Boolean   @default(false) @map("can_post_messages")
   canEditMessages     Boolean   @default(false) @map("can_edit_messages")
   canDeleteMessages   Boolean   @default(false) @map("can_delete_messages")
+  canInviteUsers      Boolean   @default(false) @map("can_invite_users")
   lastPermissionCheck DateTime? @map("last_permission_check")
 
   // Pricing

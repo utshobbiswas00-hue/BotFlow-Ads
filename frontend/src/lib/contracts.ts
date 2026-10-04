@@ -64,6 +64,13 @@ export interface ChannelDetail extends ChannelSummary {
   /* Publisher ad-delivery switches — always present on the current backend. */
   acceptAds: boolean;
   minAdPriceCents: number;
+  /* Bot's rights snapshot. Optional so the contract stays usable with a backend that
+     doesn't write them; the panel defaults any missing flag to false and the banner stays. */
+  botIsAdmin?: boolean;
+  canPostMessages?: boolean;
+  canEditMessages?: boolean;
+  canDeleteMessages?: boolean;
+  canInviteUsers?: boolean;
 }
 
 export interface ChannelRequest {
